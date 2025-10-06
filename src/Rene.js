@@ -9,14 +9,6 @@ export default function ReneAILanding() {
       backgroundColor: "rgba(13, 15, 20, 0.75)",
       backdropFilter: "blur(5px)",
     }}>
-      <style>{`
-        @keyframes fadePulse {
-          0% { opacity: 0.4; filter: blur(0px); }
-          50% { opacity: 0.9; filter: blur(2px); }
-          100% { opacity: 0.4; filter: blur(0px); }
-        }
-      `}</style>
-
       {/* === Header === */}
       <header
         style={{
@@ -54,7 +46,7 @@ export default function ReneAILanding() {
         </div>
       </section>
 
-      {/* === Experience Section (raised higher) === */}
+      {/* === Experience Section === */}
       <section style={{
         maxWidth: "48rem",
         textAlign: "center",
@@ -100,15 +92,6 @@ export default function ReneAILanding() {
           </a>
         </div>
       </section>
-
-      {/* === Animated Fade Divider === */}
-      <div style={{
-        width: "100%",
-        height: "2px",
-        background: "linear-gradient(90deg, transparent, rgba(45,156,255,0.5), transparent)",
-        margin: "2rem 0",
-        animation: "fadePulse 6s ease-in-out infinite",
-      }}></div>
 
       {/* === Features Section === */}
       <section style={{
