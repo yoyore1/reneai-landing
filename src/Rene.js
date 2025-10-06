@@ -6,9 +6,17 @@ export default function ReneAILanding() {
       flexDirection: "column",
       alignItems: "center",
       padding: "0 1.5rem",
-      backgroundColor: "rgba(13, 15, 20, 0.75)", // translucent overlay
+      backgroundColor: "rgba(13, 15, 20, 0.75)",
       backdropFilter: "blur(5px)",
     }}>
+      <style>{`
+        @keyframes fadePulse {
+          0% { opacity: 0.4; filter: blur(0px); }
+          50% { opacity: 0.9; filter: blur(2px); }
+          100% { opacity: 0.4; filter: blur(0px); }
+        }
+      `}</style>
+
       {/* === Header === */}
       <header
         style={{
@@ -29,11 +37,11 @@ export default function ReneAILanding() {
       </header>
 
       {/* === Hero Section === */}
-      <section style={{ textAlign: "center", padding: "8rem 0", maxWidth: "48rem" }}>
+      <section style={{ textAlign: "center", padding: "6rem 0 4rem", maxWidth: "48rem" }}>
         <h1 style={{ fontSize: "3rem", fontWeight: "bold", marginBottom: "1rem" }}>
           Your 24/7 AI Receptionist — Book, Cancel, Reschedule, and Answer Calls Instantly.
         </h1>
-        <p style={{ fontSize: "1.125rem", color: "#E0E2E8", marginBottom: "2rem" }}>
+        <p style={{ fontSize: "1.125rem", color: "#E0E2E8", marginBottom: "1.75rem" }}>
           ReneAI handles your front desk so you can focus on your business.
         </p>
         <div style={{ display: "flex", justifyContent: "center", gap: "1rem" }}>
@@ -46,15 +54,15 @@ export default function ReneAILanding() {
         </div>
       </section>
 
-      {/* === Experience Section (moved up) === */}
+      {/* === Experience Section (raised higher) === */}
       <section style={{
         maxWidth: "48rem",
         textAlign: "center",
-        padding: "6rem 0",
+        padding: "3rem 0 4rem",
         borderTop: "1px solid rgba(255,255,255,0.1)"
       }}>
-        <h2 style={{ fontSize: "2.25rem", fontWeight: "bold", marginBottom: "1.5rem" }}>Experience ReneAI Live</h2>
-        <p style={{ color: "#E0E2E8", fontSize: "1.125rem", marginBottom: "2rem", lineHeight: "1.6" }}>
+        <h2 style={{ fontSize: "2.25rem", fontWeight: "bold", marginBottom: "1.25rem" }}>Experience ReneAI Live</h2>
+        <p style={{ color: "#E0E2E8", fontSize: "1.125rem", marginBottom: "1.75rem", lineHeight: "1.6" }}>
           Watch our demo or call ReneAI directly to experience the assistant in action. 
           Discover how easy front-desk automation can be for your business.
         </p>
@@ -93,13 +101,22 @@ export default function ReneAILanding() {
         </div>
       </section>
 
-      {/* === Features Section (moved down) === */}
+      {/* === Animated Fade Divider === */}
+      <div style={{
+        width: "100%",
+        height: "2px",
+        background: "linear-gradient(90deg, transparent, rgba(45,156,255,0.5), transparent)",
+        margin: "2rem 0",
+        animation: "fadePulse 6s ease-in-out infinite",
+      }}></div>
+
+      {/* === Features Section === */}
       <section style={{
         display: "grid",
         gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
         gap: "2rem",
         maxWidth: "72rem",
-        padding: "6rem 0",
+        padding: "5rem 0",
         borderTop: "1px solid rgba(255,255,255,0.1)"
       }}>
         {[
