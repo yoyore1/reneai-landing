@@ -46,7 +46,54 @@ export default function ReneAILanding() {
         </div>
       </section>
 
-      {/* === Features Section === */}
+      {/* === Experience Section (moved up) === */}
+      <section style={{
+        maxWidth: "48rem",
+        textAlign: "center",
+        padding: "6rem 0",
+        borderTop: "1px solid rgba(255,255,255,0.1)"
+      }}>
+        <h2 style={{ fontSize: "2.25rem", fontWeight: "bold", marginBottom: "1.5rem" }}>Experience ReneAI Live</h2>
+        <p style={{ color: "#E0E2E8", fontSize: "1.125rem", marginBottom: "2rem", lineHeight: "1.6" }}>
+          Watch our demo or call ReneAI directly to experience the assistant in action. 
+          Discover how easy front-desk automation can be for your business.
+        </p>
+        <div style={{ display: "flex", justifyContent: "center", gap: "1rem", flexWrap: "wrap" }}>
+          <a
+            href="tel:+14376008812"
+            style={{
+              display: "inline-block",
+              backgroundColor: "#2D9CFF",
+              color: "white",
+              padding: "1rem 2rem",
+              borderRadius: "0.75rem",
+              fontWeight: 600,
+              textDecoration: "none",
+              boxShadow: "0 0 10px rgba(45,156,255,0.3)",
+            }}
+          >
+            📞 Call ReneAI Now
+          </a>
+          <a
+            href="mailto:yovenre1@gmail.com"
+            style={{
+              display: "inline-block",
+              border: "1px solid #2D9CFF",
+              color: "#2D9CFF",
+              padding: "1rem 2rem",
+              borderRadius: "0.75rem",
+              fontWeight: 600,
+              textDecoration: "none",
+              background: "none",
+              boxShadow: "0 0 10px rgba(45,156,255,0.3)",
+            }}
+          >
+            📅 Book a Demo
+          </a>
+        </div>
+      </section>
+
+      {/* === Features Section (moved down) === */}
       <section style={{
         display: "grid",
         gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
@@ -72,51 +119,6 @@ export default function ReneAILanding() {
             <p style={{ color: "#C5C8CE", fontSize: "0.9rem", lineHeight: "1.5" }}>{f.desc}</p>
           </div>
         ))}
-      </section>
-
-      {/* === Demo Section === */}
-      <section style={{
-        maxWidth: "48rem",
-        textAlign: "center",
-        padding: "6rem 0",
-        borderTop: "1px solid rgba(255,255,255,0.1)"
-      }}>
-        <h2 style={{ fontSize: "2.25rem", fontWeight: "bold", marginBottom: "1.5rem" }}>Experience ReneAI Live</h2>
-        <p style={{ color: "#E0E2E8", fontSize: "1.125rem", marginBottom: "2rem", lineHeight: "1.6" }}>
-          Watch our demo or call ReneAI directly to experience the assistant in action. 
-          Discover how easy front-desk automation can be for your business.
-        </p>
-        <div style={{ display: "flex", justifyContent: "center", gap: "1rem", flexWrap: "wrap" }}>
-          <a
-            href="tel:+14376008812"
-            style={{
-              display: "inline-block",
-              backgroundColor: "#2D9CFF",
-              color: "white",
-              padding: "1rem 2rem",
-              borderRadius: "0.75rem",
-              fontWeight: 600,
-              textDecoration: "none",
-            }}
-          >
-            📞 Call ReneAI Now
-          </a>
-          <a
-            href="mailto:yovenre1@gmail.com"
-            style={{
-              display: "inline-block",
-              border: "1px solid #2D9CFF",
-              color: "#2D9CFF",
-              padding: "1rem 2rem",
-              borderRadius: "0.75rem",
-              fontWeight: 600,
-              textDecoration: "none",
-              background: "none",
-            }}
-          >
-            📅 Book a Demo
-          </a>
-        </div>
       </section>
 
       {/* === Privacy Section === */}
