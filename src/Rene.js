@@ -46,32 +46,6 @@ export default function ReneAILanding() {
         </div>
       </section>
 
-      {/* === Trusted By Banner === */}
-      <section style={{
-        width: "100%",
-        backgroundColor: "rgba(23, 26, 34, 0.8)",
-        borderTop: "1px solid rgba(255,255,255,0.1)",
-        borderBottom: "1px solid rgba(255,255,255,0.1)",
-        padding: "2rem 0",
-        textAlign: "center",
-      }}>
-        <p style={{ color: "#C5C8CE", fontSize: "1.125rem", marginBottom: "1rem" }}>
-          Trusted by businesses across Canada
-        </p>
-        <div style={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          gap: "2rem",
-          fontSize: "2rem",
-        }}>
-          <span role="img" aria-label="tooth">🦷</span>
-          <span role="img" aria-label="barber">💈</span>
-          <span role="img" aria-label="burger">🍔</span>
-          <span role="img" aria-label="wrench">🔧</span>
-        </div>
-      </section>
-
       {/* === Experience Section === */}
       <section style={{
         maxWidth: "48rem",
@@ -116,52 +90,6 @@ export default function ReneAILanding() {
           >
             📅 Book a Demo
           </a>
-        </div>
-      </section>
-
-      {/* === How It Works Section === */}
-      <section style={{
-        maxWidth: "72rem",
-        textAlign: "center",
-        padding: "5rem 0",
-        borderTop: "1px solid rgba(255,255,255,0.1)",
-      }}>
-        <h2 style={{ fontSize: "2.25rem", fontWeight: "bold", marginBottom: "2rem" }}>How It Works</h2>
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
-          gap: "2rem",
-        }}>
-          {[
-            {
-              icon: "📞",
-              title: "1. Customer Calls",
-              desc: "ReneAI answers instantly with natural speech, greeting your clients 24/7.",
-            },
-            {
-              icon: "🗓️",
-              title: "2. AI Books Appointment",
-              desc: "Automatically checks your calendar and schedules or modifies bookings.",
-            },
-            {
-              icon: "✅",
-              title: "3. Confirmation Sent",
-              desc: "Customers receive text confirmations and reminders — no missed calls.",
-            },
-          ].map((step, i) => (
-            <div key={i} style={{
-              background: "rgba(23, 26, 34, 0.7)",
-              border: "1px solid rgba(255,255,255,0.1)",
-              borderRadius: "1rem",
-              padding: "2rem",
-              textAlign: "center",
-              backdropFilter: "blur(3px)",
-            }}>
-              <div style={{ fontSize: "2rem", marginBottom: "1rem" }}>{step.icon}</div>
-              <h3 style={{ fontSize: "1.25rem", fontWeight: 600, marginBottom: "0.5rem" }}>{step.title}</h3>
-              <p style={{ color: "#C5C8CE", fontSize: "0.95rem", lineHeight: "1.6" }}>{step.desc}</p>
-            </div>
-          ))}
         </div>
       </section>
 
