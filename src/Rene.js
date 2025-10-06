@@ -1,27 +1,21 @@
 export default function ReneAILanding() {
-  const API_BASE_URL = "http://54.196.196.126:5000";
-
-  const handleTestCall = async () => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/call`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ test: true }),
-      });
-      if (response.ok) {
-        alert("✅ Test call initiated! Check your phone.");
-      } else {
-        alert("⚠️ Something went wrong triggering the call.");
-      }
-    } catch (error) {
-      alert("❌ Failed to reach the server. Check if your backend is running.");
-    }
-  };
-
   return (
     <div style={{ backgroundColor: "#0D0F14", color: "white", display: "flex", flexDirection: "column", alignItems: "center", padding: "0 1.5rem" }}>
-      <header style={{ width: "100%", padding: "1rem 1.5rem", display: "flex", justifyContent: "center", borderBottom: "1px solid #222630", backgroundColor: "rgba(13, 15, 20, 0.9)", position: "sticky", top: 0, zIndex: 50, cursor: "pointer" }}
-        onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
+      <header
+        style={{
+          width: "100%",
+          padding: "1rem 1.5rem",
+          display: "flex",
+          justifyContent: "center",
+          borderBottom: "1px solid #222630",
+          backgroundColor: "rgba(13, 15, 20, 0.9)",
+          position: "sticky",
+          top: 0,
+          zIndex: 50,
+          cursor: "pointer",
+        }}
+        onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+      >
         <h2 style={{ fontSize: "1.5rem", fontWeight: "bold", color: "#2D9CFF" }}>ReneAI</h2>
       </header>
 
@@ -58,11 +52,24 @@ export default function ReneAILanding() {
       <section style={{ maxWidth: "48rem", textAlign: "center", padding: "6rem 0", borderTop: "1px solid #222630" }}>
         <h2 style={{ fontSize: "2.25rem", fontWeight: "bold", marginBottom: "1.5rem" }}>Experience ReneAI Live</h2>
         <p style={{ color: "#C5C8CE", fontSize: "1.125rem", marginBottom: "2rem", lineHeight: "1.6" }}>
-          Watch our demo or make a sample test call to see ReneAI in action. Enjoy a preview of smart, friendly responses and a seamless scheduling experience for your business. Discover how easy front-desk automation can be!
+          Watch our demo or call ReneAI directly to experience the assistant in action. Enjoy a preview of smart, friendly responses and a seamless scheduling experience for your business. Discover how easy front-desk automation can be!
         </p>
-        <button onClick={handleTestCall} style={{ display: "inline-block", backgroundColor: "#2D9CFF", color: "white", padding: "1rem 2rem", borderRadius: "0.75rem", fontWeight: 600, textDecoration: "none", border: "none", cursor: "pointer" }}>
-          Make a Free Test Call Here
-        </button>
+        <a
+          href="tel:+14376008812"
+          style={{
+            display: "inline-block",
+            backgroundColor: "#2D9CFF",
+            color: "white",
+            padding: "1rem 2rem",
+            borderRadius: "0.75rem",
+            fontWeight: 600,
+            textDecoration: "none",
+            border: "none",
+            cursor: "pointer",
+          }}
+        >
+          Call ReneAI Now
+        </a>
       </section>
 
       <section style={{ maxWidth: "48rem", textAlign: "center", padding: "6rem 0", borderTop: "1px solid #222630" }}>
