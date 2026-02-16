@@ -265,7 +265,8 @@ class PolymarketClient:
     async def buy(self, market: Market, side: str, usdc_amount: float) -> Position:
         """
         Buy `side` (YES or NO) shares on `market` spending up to `usdc_amount`.
-        Returns a Position.
+        Uses limit order at (ask - offset) for better fills.
+        Skips if ask is above max_entry_price (alpha is gone).
         """
         token_id = market.yes_token_id if side == "YES" else market.no_token_id
         ask_price = market.yes_ask if side == "YES" else market.no_ask
@@ -274,7 +275,23 @@ class PolymarketClient:
             log.warning("Bad ask price %.4f for %s %s, skipping", ask_price, side, market.condition_id[:8])
             return Position(market=market, side=side, token_id=token_id)
 
-        qty = usdc_amount / ask_price
+        # Skip if ask is too high -- the move is already priced in
+        if ask_price > cfg.max_entry_price:
+            log.warning(
+                "Ask $%.3f > max $%.3f for %s %s — alpha gone, skipping",
+                ask_price, cfg.max_entry_price, side, market.condition_id[:8],
+            )
+            return Position(market=market, side=side, token_id=token_id)
+
+        # Place limit order below the ask for better fills
+        buy_price = round(ask_price - cfg.limit_offset, 3)
+        buy_price = max(buy_price, 0.01)  # floor at 1 cent
+        log.info(
+            "Ask=$%.3f → limit buy @ $%.3f (offset=%.3f)",
+            ask_price, buy_price, cfg.limit_offset,
+        )
+
+        qty = usdc_amount / buy_price
         qty = math.floor(qty * 100) / 100  # round down to 2 decimals
 
         pos = Position(
@@ -282,7 +299,7 @@ class PolymarketClient:
             side=side,
             token_id=token_id,
             qty=qty,
-            avg_entry=ask_price,
+            avg_entry=buy_price,
             entry_time=time.time(),
         )
 
@@ -290,8 +307,8 @@ class PolymarketClient:
             pos.filled = True
             pos.order_id = f"DRY-{int(time.time()*1000)}"
             log.info(
-                "[DRY] BUY %s %.2f shares @ $%.4f ($%.2f) | %s",
-                side, qty, ask_price, usdc_amount, market.question[:60],
+                "[DRY] BUY %s %.2f shares @ $%.4f (ask was $%.4f, saved $%.4f/share) | %s",
+                side, qty, buy_price, ask_price, ask_price - buy_price, market.question[:60],
             )
             return pos
 
@@ -301,7 +318,7 @@ class PolymarketClient:
             from py_clob_client.order_builder.constants import BUY
 
             order_args = OrderArgs(
-                price=ask_price,
+                price=buy_price,
                 size=qty,
                 side=BUY,
                 token_id=token_id,
