@@ -19,7 +19,7 @@ class Config:
 
     # Spike detection: minimum % move from window-open price on Binance
     # before we consider it a tradable signal
-    spike_threshold_pct: float = float(os.getenv("SPIKE_THRESHOLD_PCT", "0.15"))
+    spike_threshold_pct: float = float(os.getenv("SPIKE_THRESHOLD_PCT", "0.03"))
 
     # If gain hits 20%+, let it ride (moonbag) with a trailing stop at 10%
     moonbag_pct: float = float(os.getenv("MOONBAG_PCT", "20.0"))

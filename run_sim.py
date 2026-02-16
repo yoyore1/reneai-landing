@@ -21,7 +21,7 @@ from typing import Optional, List, Tuple
 import aiohttp
 
 # ───── config ─────
-SPIKE_THRESHOLD_PCT  = 0.08     # BTC move % to trigger entry
+SPIKE_THRESHOLD_PCT  = 0.03     # BTC move % to trigger entry (~$20 on $68k BTC)
 MOONBAG_PCT          = 20.0     # if gain hits this, let it ride
 PROFIT_TARGET_PCT    = 10.0     # normal sell target / trailing stop floor
 DRAWDOWN_TRIGGER_PCT = -15.0    # enter protection mode if we drop this far
