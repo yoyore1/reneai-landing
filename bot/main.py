@@ -47,7 +47,7 @@ async def main(headless: bool = False):
     log.info("=" * 60)
     log.info("Binance-Polymarket Arbitrage Bot starting")
     log.info("  dry_run        = %s", cfg.dry_run)
-    log.info("  spike_threshold = %.2f%%", cfg.spike_threshold_pct)
+    log.info("  spike          = $%.0f in %.0fs", cfg.spike_move_usd, cfg.spike_window_sec)
     log.info("  profit_target  = %.1f%%", cfg.profit_target_pct)
     log.info("  max_position   = $%.2f", cfg.max_position_usdc)
     log.info("=" * 60)
