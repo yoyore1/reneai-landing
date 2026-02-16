@@ -13,8 +13,12 @@ When Binance shows a clear directional move during a 5-min window the
 outcome is essentially known, but Polymarket odds haven't caught up yet.
 We:
   1. Detect the Binance spike (price moved > threshold from window open).
-  2. Buy the winning side on Polymarket while it's still cheap.
-  3. Sell once Polymarket odds adjust (10 % gain) OR hold to resolution.
+  2. Buy the winning side on Polymarket immediately.
+  3. Exit rules:
+     - PROFIT: Sell when position is up 10%.
+     - PROTECTION: If position ever drops past -15%, enter protection
+       mode.  In protection mode, sell when it recovers to -10%
+       (accept a small loss to avoid a catastrophic one).
 """
 
 import asyncio
@@ -185,30 +189,52 @@ class Strategy:
                 continue
 
             gain_pct = ((bid - pos.avg_entry) / pos.avg_entry) * 100
-
-            # Check if market window ended (auto-resolve)
             now = time.time()
             window_ended = pos.market.window_end and now > pos.market.window_end
 
-            if gain_pct >= cfg.profit_target_pct:
-                # Target hit -- sell
+            # --- Check if we should enter protection mode ---
+            if not pos.protection_mode and gain_pct <= cfg.drawdown_trigger_pct:
+                pos.protection_mode = True
                 log.info(
-                    "EXIT TARGET: %s gain=%.1f%% (entry=%.4f bid=%.4f)",
-                    pos.side, gain_pct, pos.avg_entry, bid,
+                    "PROTECTION MODE: %s dropped to %.1f%% (trigger=%.1f%%) "
+                    "| will sell at %.1f%%",
+                    pos.side, gain_pct, cfg.drawdown_trigger_pct,
+                    cfg.protection_exit_pct,
+                )
+                self.stats.last_action = f"PROTECT {pos.side} @{gain_pct:.1f}%"
+
+            # --- Exit decisions ---
+            should_sell = False
+            sell_reason = ""
+
+            if gain_pct >= cfg.profit_target_pct:
+                # Normal profit target
+                should_sell = True
+                sell_reason = f"PROFIT +{gain_pct:.1f}%"
+            elif pos.protection_mode and gain_pct >= cfg.protection_exit_pct:
+                # In protection mode: sell once we recover to -10%
+                should_sell = True
+                sell_reason = f"PROTECTION EXIT {gain_pct:.1f}%"
+
+            if should_sell:
+                log.info(
+                    "EXIT [%s]: %s | entry=%.4f bid=%.4f gain=%.1f%%",
+                    sell_reason, pos.side, pos.avg_entry, bid, gain_pct,
                 )
                 sold = await self.poly.sell(pos)
                 if sold:
                     self.stats.total_exits += 1
                     self.stats.total_pnl += pos.pnl or 0
-                    self.stats.wins += 1
-                    self.stats.last_action = f"SELL {pos.side} +{gain_pct:.1f}%"
+                    if (pos.pnl or 0) >= 0:
+                        self.stats.wins += 1
+                    else:
+                        self.stats.losses += 1
+                    self.stats.last_action = f"SELL {pos.side} [{sell_reason}]"
                     self._closed_positions.append(pos)
                 else:
                     still_open.append(pos)
             elif window_ended:
-                # Window over -- if the position resolves to 1.0 we win, else we lose.
-                # In practice Polymarket settles automatically; we just log it.
-                pnl_est = (1.0 - pos.avg_entry) * pos.qty  # assume we won (best case)
+                # Window over -- settles on-chain
                 log.info(
                     "WINDOW ENDED: %s | entry=%.4f | will settle on-chain",
                     pos.side, pos.avg_entry,

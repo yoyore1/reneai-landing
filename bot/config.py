@@ -24,6 +24,12 @@ class Config:
     # Target profit % on the Polymarket position before we sell
     profit_target_pct: float = float(os.getenv("PROFIT_TARGET_PCT", "10.0"))
 
+    # If position drops below this %, enter protection mode
+    drawdown_trigger_pct: float = float(os.getenv("DRAWDOWN_TRIGGER_PCT", "-15.0"))
+
+    # In protection mode, sell at this % (accept small loss to avoid big one)
+    protection_exit_pct: float = float(os.getenv("PROTECTION_EXIT_PCT", "-10.0"))
+
     # Maximum USDC to risk per 5-minute window
     max_position_usdc: float = float(os.getenv("MAX_POSITION_USDC", "50.0"))
 

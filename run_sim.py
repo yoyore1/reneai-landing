@@ -21,10 +21,12 @@ from typing import Optional, List, Tuple
 import aiohttp
 
 # ───── config ─────
-SPIKE_THRESHOLD_PCT = 0.08
-PROFIT_TARGET_PCT   = 10.0
-MAX_POSITION_USDC   = 50.0
-POLL_SEC            = 1.5
+SPIKE_THRESHOLD_PCT  = 0.08
+PROFIT_TARGET_PCT    = 10.0
+DRAWDOWN_TRIGGER_PCT = -15.0   # enter protection mode if we drop this far
+PROTECTION_EXIT_PCT  = -10.0   # in protection mode, sell here to cut losses
+MAX_POSITION_USDC    = 50.0
+POLL_SEC             = 1.5
 
 BINANCE_URL = "https://api.binance.us/api/v3/ticker/price?symbol=BTCUSDT"
 GAMMA_API   = "https://gamma-api.polymarket.com"
@@ -61,6 +63,8 @@ class Pos:
     exit_px: Optional[float] = None
     pnl: Optional[float] = None
     reason: str = ""
+    protection_mode: bool = False   # True once we drop past DRAWDOWN_TRIGGER
+    worst_pnl: float = 0.0         # track worst drawdown
 
 # ───── API calls ─────
 async def btc_price(s: aiohttp.ClientSession) -> Optional[float]:
@@ -233,32 +237,57 @@ async def sim_window(s: aiohttp.ClientSession, mkt: Mkt, num: int) -> Optional[P
             # ── Have position, watch for exit ──
             bid_px, bid_s = await best_bid(s, pos.token)
 
-            # Also model bid if book is thin
+            # Model bid if book is thin
             if bid_px is None or bid_px < 0.05:
-                # Model: as time passes and BTC stays on our side, bid rises
                 elapsed = time.time() - pos.t_entry
-                # Roughly: bid catches up to true value over 60-120 seconds
-                catchup = min(1.0, elapsed / 90.0)  # 0→1 over 90s
+                catchup = min(1.0, elapsed / 90.0)
                 true_val = 0.55 + abs(move) * 0.8
                 true_val = min(true_val, 0.95)
                 modeled_bid = pos.entry + (true_val - pos.entry) * catchup
                 if move * (1 if pos.side == "Up" else -1) < 0:
-                    # BTC reversed against us
-                    modeled_bid = pos.entry * 0.85
-                bid_px = modeled_bid
+                    modeled_bid = pos.entry * (1.0 + move * 0.02)
+                bid_px = max(modeled_bid, 0.01)
                 bid_s = f"${bid_px:.3f}(model)"
 
             gain = ((bid_px - pos.entry) / pos.entry) * 100
             gc = G if gain >= 0 else RD
 
-            log(f"  {pos.side} pos: entry=${pos.entry:.3f} bid={bid_s} {gc}P&L={gain:+.1f}%{R}  BTC={mv_c}{move:+.4f}%{R}  left={left:.0f}s")
+            # Track worst drawdown
+            if gain < pos.worst_pnl:
+                pos.worst_pnl = gain
 
+            # Check if we enter protection mode
+            mode_str = ""
+            if not pos.protection_mode and gain <= DRAWDOWN_TRIGGER_PCT:
+                pos.protection_mode = True
+                print()
+                log(f"{B}{RD}*** PROTECTION MODE: dropped to {gain:+.1f}% (trigger={DRAWDOWN_TRIGGER_PCT}%) ***{R}")
+                log(f"{Y}  Will sell when position recovers to {PROTECTION_EXIT_PCT}%{R}")
+                print()
+
+            if pos.protection_mode:
+                mode_str = f" {Y}[PROTECT]{R}"
+
+            log(f"  {pos.side} pos: entry=${pos.entry:.3f} bid={bid_s} {gc}P&L={gain:+.1f}%{R}{mode_str}  BTC={mv_c}{move:+.4f}%{R}  left={left:.0f}s")
+
+            # Exit: profit target
             if gain >= PROFIT_TARGET_PCT:
                 pos.exit_px = bid_px
                 pos.pnl = (bid_px - pos.entry) * pos.qty
-                pos.reason = f"TARGET +{gain:.1f}%"
+                pos.reason = f"PROFIT +{gain:.1f}%"
                 print()
                 log(f"{B}{G}*** SELL @ ${bid_px:.3f} | PnL: ${pos.pnl:+.2f} ({gain:+.1f}%) ***{R}")
+                print()
+                return pos
+
+            # Exit: protection mode recovery to -10%
+            if pos.protection_mode and gain >= PROTECTION_EXIT_PCT:
+                pos.exit_px = bid_px
+                pos.pnl = (bid_px - pos.entry) * pos.qty
+                pos.reason = f"PROTECTION EXIT {gain:+.1f}% (worst was {pos.worst_pnl:+.1f}%)"
+                print()
+                log(f"{B}{Y}*** PROTECTION SELL @ ${bid_px:.3f} | PnL: ${pos.pnl:+.2f} ({gain:+.1f}%) ***{R}")
+                log(f"  Took small loss to avoid bigger one (worst drawdown was {pos.worst_pnl:+.1f}%)")
                 print()
                 return pos
 
@@ -323,7 +352,7 @@ async def main():
             log(f"  {i}. {m.question}  ({m.start.strftime('%H:%M')}-{m.end.strftime('%H:%M')} UTC)")
 
         print()
-        log(f"Config: spike={SPIKE_THRESHOLD_PCT}%  target={PROFIT_TARGET_PCT}%  size=${MAX_POSITION_USDC}")
+        log(f"Config: spike={SPIKE_THRESHOLD_PCT}%  target=+{PROFIT_TARGET_PCT}%  drawdown={DRAWDOWN_TRIGGER_PCT}%  protect_exit={PROTECTION_EXIT_PCT}%  size=${MAX_POSITION_USDC}")
         print()
 
         results: List[Optional[Pos]] = []

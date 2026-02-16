@@ -57,6 +57,7 @@ class Position:
     entry_time: float = 0.0
     exit_price: Optional[float] = None
     pnl: Optional[float] = None
+    protection_mode: bool = False  # True once position drops past drawdown trigger
 
 
 # ---------------------------------------------------------------------------

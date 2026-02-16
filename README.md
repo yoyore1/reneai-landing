@@ -12,17 +12,24 @@ Binance updates BTC/USDT prices in **real time** (sub-second). Polymarket odds, 
 
 1. **Monitor Binance** -- WebSocket feed gives us the live BTC price every trade.
 2. **Detect spikes** -- When BTC moves more than a configurable threshold (default 0.15%) from the window-open price, the outcome is increasingly certain.
-3. **Buy on Polymarket** -- Immediately buy the winning side (YES if up, NO if down) while Polymarket odds are still stale.
-4. **Sell at 10% gain** -- As other Polymarket traders catch up and the odds adjust, sell the position for a quick 10% profit.
-5. **Or hold to resolution** -- If the market resolves before we hit our target, shares pay out $1 each (we bought them well below $1).
+3. **Buy on Polymarket** -- Immediately buy the winning side (Up if BTC spiked up, Down if it spiked down) at whatever price is available.
+4. **Sell at +10% profit** -- As other Polymarket traders catch up and the odds adjust, sell the position for a quick 10% gain.
+5. **Protection mode** -- If the position drops past -15%, the bot enters protection mode. Instead of hoping for profit, it now waits for the position to recover to -10% and sells there, accepting a small loss to prevent a catastrophic one.
+6. **Hold to resolution** -- If neither exit triggers before the window ends, the market resolves on-chain.
 
 ```
 Binance: BTC jumps from $97,000 → $97,200 (+0.21%) in 90 seconds
 Polymarket: "BTC above $97,000 at 12:35?" YES still priced at $0.55
-Bot: BUY YES @ $0.55
+Bot: BUY Up @ $0.55
 ... 60 seconds later ...
-Polymarket: YES reprices to $0.85 as traders notice the move
-Bot: SELL YES @ $0.61 (+10.9% gain)
+Polymarket: Up reprices to $0.85 as traders notice the move
+Bot: SELL Up @ $0.61 (+10.9% gain)
+
+--- If it goes wrong: ---
+Bot: BUY Up @ $0.55 (BTC spiked up)
+BTC reverses... position drops to -18% → PROTECTION MODE activated
+BTC bounces back a little... position recovers to -10%
+Bot: SELL Up @ $0.495 (-10% loss, protected from worse)
 ```
 
 ## Project Structure
@@ -63,8 +70,12 @@ cp .env.example .env
 **Optional tuning:**
 | Variable | Default | Description |
 |----------|---------|-------------|
+| Variable | Default | Description |
+|----------|---------|-------------|
 | `SPIKE_THRESHOLD_PCT` | `0.15` | Minimum BTC move (%) from window open to trigger a buy |
 | `PROFIT_TARGET_PCT` | `10.0` | Sell when Polymarket position is up this % |
+| `DRAWDOWN_TRIGGER_PCT` | `-15.0` | If position drops past this %, enter protection mode |
+| `PROTECTION_EXIT_PCT` | `-10.0` | In protection mode, sell at this % to cut losses |
 | `MAX_POSITION_USDC` | `50.0` | Max USDC to spend per trade |
 | `POLL_INTERVAL_SEC` | `1.0` | How often to check for signals (seconds) |
 | `DRY_RUN` | `true` | Paper trading mode -- no real money |
