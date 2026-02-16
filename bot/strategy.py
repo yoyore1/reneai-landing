@@ -1,0 +1,229 @@
+"""
+Core arbitrage strategy.
+
+Concept
+-------
+Every 5 minutes Polymarket opens a new binary market:
+  "Will BTC be above $X at HH:MM?"
+
+Binance price updates in real time (milliseconds).  Polymarket prices
+lag because human traders need time to react.
+
+When Binance shows a clear directional move during a 5-min window the
+outcome is essentially known, but Polymarket odds haven't caught up yet.
+We:
+  1. Detect the Binance spike (price moved > threshold from window open).
+  2. Buy the winning side on Polymarket while it's still cheap.
+  3. Sell once Polymarket odds adjust (10 % gain) OR hold to resolution.
+"""
+
+import asyncio
+import logging
+import time
+from dataclasses import dataclass, field
+from typing import Optional, List, Dict
+
+from bot.config import cfg
+from bot.binance_feed import BinanceFeed
+from bot.polymarket import PolymarketClient, Market, Position
+
+log = logging.getLogger("strategy")
+
+
+@dataclass
+class WindowState:
+    """Tracks per-window state."""
+    market: Market
+    window_open_price: Optional[float] = None  # BTC price at window start
+    signal_fired: bool = False                   # did we already trade this window?
+    signal_side: str = ""                        # YES or NO
+    position: Optional[Position] = None
+
+
+@dataclass
+class StrategyStats:
+    """Running statistics for the dashboard."""
+    total_signals: int = 0
+    total_trades: int = 0
+    total_exits: int = 0
+    total_pnl: float = 0.0
+    wins: int = 0
+    losses: int = 0
+    current_window: str = ""
+    current_signal: str = ""
+    last_action: str = ""
+
+
+class Strategy:
+    """
+    Runs the Binance-Polymarket arbitrage loop.
+    """
+
+    def __init__(self, feed: BinanceFeed, poly: PolymarketClient):
+        self.feed = feed
+        self.poly = poly
+        self.stats = StrategyStats()
+
+        # Active window states keyed by condition_id
+        self._windows: Dict[str, WindowState] = {}
+        # Positions awaiting exit
+        self._open_positions: List[Position] = []
+        # Closed positions for logging
+        self._closed_positions: List[Position] = []
+
+        self._running = False
+
+    # ------------------------------------------------------------------
+    # Main loop
+    # ------------------------------------------------------------------
+
+    async def run(self):
+        self._running = True
+        log.info("Strategy started  |  spike_threshold=%.2f%%  profit_target=%.1f%%  dry_run=%s",
+                 cfg.spike_threshold_pct, cfg.profit_target_pct, cfg.dry_run)
+
+        while self._running:
+            try:
+                await self._tick()
+            except Exception as exc:
+                log.error("Strategy tick error: %s", exc, exc_info=True)
+            await asyncio.sleep(cfg.poll_interval_sec)
+
+    def stop(self):
+        self._running = False
+
+    # ------------------------------------------------------------------
+    # Single tick
+    # ------------------------------------------------------------------
+
+    async def _tick(self):
+        if not self.feed.is_live:
+            return  # no price yet
+
+        btc_price = self.feed.current_price
+
+        # ---- 1. Refresh active markets every ~30 s ----
+        now = time.time()
+        if not hasattr(self, "_last_discovery") or now - self._last_discovery > 30:
+            await self._discover_markets()
+            self._last_discovery = now
+
+        # ---- 2. For each active window, check for spike signal ----
+        for cid, ws in list(self._windows.items()):
+            # Skip if window has ended
+            if ws.market.window_end and now > ws.market.window_end:
+                self._windows.pop(cid, None)
+                continue
+
+            # Record the BTC price at the start of the window
+            if ws.window_open_price is None:
+                if ws.market.window_start and now >= ws.market.window_start:
+                    ws.window_open_price = btc_price
+                    log.info("Window open price set: $%.2f for %s", btc_price, ws.market.question[:50])
+                elif not ws.market.window_start:
+                    ws.window_open_price = btc_price
+
+            if ws.window_open_price is None or ws.signal_fired:
+                continue
+
+            # Calculate move from window open
+            move_pct = ((btc_price - ws.window_open_price) / ws.window_open_price) * 100
+            self.stats.current_window = ws.market.question[:60]
+
+            if abs(move_pct) >= cfg.spike_threshold_pct:
+                # Determine side: if BTC went UP → YES wins, if DOWN → NO wins
+                side = "YES" if move_pct > 0 else "NO"
+                ws.signal_fired = True
+                ws.signal_side = side
+                self.stats.total_signals += 1
+                self.stats.current_signal = f"{'UP' if side == 'YES' else 'DOWN'} {move_pct:+.3f}%"
+                log.info(
+                    "SIGNAL: BTC %+.3f%% from $%.2f → $%.2f  |  Buy %s on %s",
+                    move_pct, ws.window_open_price, btc_price, side, ws.market.question[:50],
+                )
+
+                # Fetch latest Polymarket prices
+                await self.poly.get_market_prices(ws.market)
+
+                # Execute the buy
+                position = await self.poly.buy(ws.market, side, cfg.max_position_usdc)
+                if position.filled:
+                    ws.position = position
+                    self._open_positions.append(position)
+                    self.stats.total_trades += 1
+                    self.stats.last_action = f"BUY {side} @ ${position.avg_entry:.4f}"
+
+        # ---- 3. Monitor open positions for exit ----
+        await self._check_exits()
+
+    # ------------------------------------------------------------------
+    # Market discovery
+    # ------------------------------------------------------------------
+
+    async def _discover_markets(self):
+        markets = await self.poly.find_active_btc_5min_markets()
+        for mkt in markets:
+            if mkt.condition_id not in self._windows:
+                self._windows[mkt.condition_id] = WindowState(market=mkt)
+                log.info("Tracking new market: %s", mkt.question[:70])
+
+    # ------------------------------------------------------------------
+    # Exit management
+    # ------------------------------------------------------------------
+
+    async def _check_exits(self):
+        still_open: List[Position] = []
+        for pos in self._open_positions:
+            if pos.exit_price is not None:
+                continue  # already closed
+
+            # Get current bid price for our token
+            bid = await self.poly._get_best_bid(pos.token_id)
+
+            if bid is None:
+                still_open.append(pos)
+                continue
+
+            gain_pct = ((bid - pos.avg_entry) / pos.avg_entry) * 100
+
+            # Check if market window ended (auto-resolve)
+            now = time.time()
+            window_ended = pos.market.window_end and now > pos.market.window_end
+
+            if gain_pct >= cfg.profit_target_pct:
+                # Target hit -- sell
+                log.info(
+                    "EXIT TARGET: %s gain=%.1f%% (entry=%.4f bid=%.4f)",
+                    pos.side, gain_pct, pos.avg_entry, bid,
+                )
+                sold = await self.poly.sell(pos)
+                if sold:
+                    self.stats.total_exits += 1
+                    self.stats.total_pnl += pos.pnl or 0
+                    self.stats.wins += 1
+                    self.stats.last_action = f"SELL {pos.side} +{gain_pct:.1f}%"
+                    self._closed_positions.append(pos)
+                else:
+                    still_open.append(pos)
+            elif window_ended:
+                # Window over -- if the position resolves to 1.0 we win, else we lose.
+                # In practice Polymarket settles automatically; we just log it.
+                pnl_est = (1.0 - pos.avg_entry) * pos.qty  # assume we won (best case)
+                log.info(
+                    "WINDOW ENDED: %s | entry=%.4f | will settle on-chain",
+                    pos.side, pos.avg_entry,
+                )
+                pos.exit_price = bid
+                pos.pnl = (bid - pos.avg_entry) * pos.qty
+                self.stats.total_exits += 1
+                self.stats.total_pnl += pos.pnl
+                if pos.pnl >= 0:
+                    self.stats.wins += 1
+                else:
+                    self.stats.losses += 1
+                self.stats.last_action = f"SETTLED {pos.side} PnL=${pos.pnl:.2f}"
+                self._closed_positions.append(pos)
+            else:
+                still_open.append(pos)
+
+        self._open_positions = still_open

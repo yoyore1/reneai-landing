@@ -1,70 +1,142 @@
-# Getting Started with Create React App
+# Binance-Polymarket BTC 5-Minute Arbitrage Bot
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+An automated trading bot that exploits the latency gap between Binance real-time BTC prices and Polymarket's 5-minute BTC prediction markets.
 
-## Available Scripts
+## How It Works
 
-In the project directory, you can run:
+Polymarket runs rolling 5-minute binary markets like *"Will BTC be above $X at 12:35?"*. The reference price is set at the start of each window (e.g., 12:30), and the market resolves 5 minutes later.
 
-### `npm start`
+Binance updates BTC/USDT prices in **real time** (sub-second). Polymarket odds, priced by human traders, lag behind by seconds to minutes.
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+**The strategy:**
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+1. **Monitor Binance** -- WebSocket feed gives us the live BTC price every trade.
+2. **Detect spikes** -- When BTC moves more than a configurable threshold (default 0.15%) from the window-open price, the outcome is increasingly certain.
+3. **Buy on Polymarket** -- Immediately buy the winning side (YES if up, NO if down) while Polymarket odds are still stale.
+4. **Sell at 10% gain** -- As other Polymarket traders catch up and the odds adjust, sell the position for a quick 10% profit.
+5. **Or hold to resolution** -- If the market resolves before we hit our target, shares pay out $1 each (we bought them well below $1).
 
-### `npm test`
+```
+Binance: BTC jumps from $97,000 → $97,200 (+0.21%) in 90 seconds
+Polymarket: "BTC above $97,000 at 12:35?" YES still priced at $0.55
+Bot: BUY YES @ $0.55
+... 60 seconds later ...
+Polymarket: YES reprices to $0.85 as traders notice the move
+Bot: SELL YES @ $0.61 (+10.9% gain)
+```
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+## Project Structure
 
-### `npm run build`
+```
+bot/
+  __init__.py
+  __main__.py         # python -m bot entry point
+  main.py             # orchestrator -- wires everything together
+  config.py           # all settings via environment variables
+  binance_feed.py     # real-time BTC/USDT from Binance WebSocket
+  polymarket.py       # Polymarket CLOB API client (discover, buy, sell)
+  strategy.py         # spike detection + position management
+  dashboard.py        # live Rich terminal dashboard
+requirements.txt
+.env.example          # copy to .env and fill in your keys
+```
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+## Quick Start
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+### 1. Install dependencies
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+```bash
+pip install -r requirements.txt
+```
 
-### `npm run eject`
+### 2. Configure
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+```bash
+cp .env.example .env
+# Edit .env with your credentials
+```
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+**Required for live trading:**
+- `POLY_API_KEY`, `POLY_API_SECRET`, `POLY_API_PASSPHRASE` -- get these from [Polymarket](https://polymarket.com) after connecting your wallet and generating API keys.
+- `POLY_PRIVATE_KEY` -- your Polygon wallet private key (the wallet must hold USDC on Polygon).
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+**Optional tuning:**
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SPIKE_THRESHOLD_PCT` | `0.15` | Minimum BTC move (%) from window open to trigger a buy |
+| `PROFIT_TARGET_PCT` | `10.0` | Sell when Polymarket position is up this % |
+| `MAX_POSITION_USDC` | `50.0` | Max USDC to spend per trade |
+| `POLL_INTERVAL_SEC` | `1.0` | How often to check for signals (seconds) |
+| `DRY_RUN` | `true` | Paper trading mode -- no real money |
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+### 3. Run
 
-## Learn More
+**With live dashboard:**
+```bash
+python -m bot
+```
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+**Headless (logs only):**
+```bash
+python -m bot --headless
+```
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+The dashboard shows:
+- Real-time BTC price from Binance
+- All tracked 5-minute windows with % move from open
+- Active signals and positions
+- P&L tracking
 
-### Code Splitting
+### 4. Go live
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+When you're ready to trade real money:
+```bash
+DRY_RUN=false python -m bot
+```
 
-### Analyzing the Bundle Size
+Make sure your Polygon wallet has USDC and your API keys are configured.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+## Safety Notes
 
-### Making a Progressive Web App
+- **Start with DRY_RUN=true** to observe the bot's behavior before risking real money.
+- **Small positions first** -- set `MAX_POSITION_USDC` low ($5-10) until you trust the setup.
+- This strategy depends on Polymarket having sufficient liquidity in the 5-minute BTC markets. If the order book is thin, fills may be poor.
+- Polymarket market structure and API can change. Monitor the bot.
+- **This is not financial advice.** Trading involves risk of loss.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+## How the Bot Finds Markets
 
-### Advanced Configuration
+The bot queries Polymarket's Gamma API every 30 seconds for active markets matching:
+- Tags: crypto
+- Keywords: "bitcoin" or "btc" AND "5 min" / "5-min"
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+It automatically parses the reference price from the market question (e.g., "$97,000.00") and tracks the time window from the market's end date.
 
-### Deployment
+## Architecture
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
+```
+                    +------------------+
+                    |  Binance WS      |
+                    |  (BTC/USDT)      |
+                    +--------+---------+
+                             |
+                    real-time price updates
+                             |
+                    +--------v---------+
+                    |                  |
+                    |    Strategy      |  <-- spike detection
+                    |    Engine        |  <-- position management
+                    |                  |  <-- exit at 10% or resolution
+                    +--------+---------+
+                             |
+                      buy / sell orders
+                             |
+                    +--------v---------+
+                    |  Polymarket      |
+                    |  CLOB API        |
+                    +------------------+
+```
 
-### `npm run build` fails to minify
+## License
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+MIT

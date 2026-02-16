@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""
+Binance-Polymarket 5-Minute BTC Arbitrage Bot
+==============================================
+
+Entry point.  Spins up three concurrent tasks:
+  1. Binance real-time price feed (WebSocket)
+  2. Strategy engine (spike detection + order management)
+  3. Terminal dashboard (Rich live display)
+
+Usage:
+    python -m bot.main              # with dashboard
+    python -m bot.main --headless   # logs only, no TUI
+"""
+
+import argparse
+import asyncio
+import logging
+import signal
+import sys
+
+from bot.config import cfg
+from bot.binance_feed import BinanceFeed
+from bot.polymarket import PolymarketClient
+from bot.strategy import Strategy
+
+
+def setup_logging(headless: bool):
+    level = logging.INFO
+    fmt = "%(asctime)s [%(name)-12s] %(levelname)-7s %(message)s"
+    if headless:
+        logging.basicConfig(level=level, format=fmt, stream=sys.stdout)
+    else:
+        # When the dashboard is active, log to file so it doesn't mess up the TUI
+        logging.basicConfig(level=level, format=fmt, filename="bot.log", filemode="a")
+    # Suppress noisy libraries
+    logging.getLogger("websockets").setLevel(logging.WARNING)
+    logging.getLogger("aiohttp").setLevel(logging.WARNING)
+
+
+async def main(headless: bool = False):
+    setup_logging(headless)
+    log = logging.getLogger("main")
+
+    log.info("=" * 60)
+    log.info("Binance-Polymarket Arbitrage Bot starting")
+    log.info("  dry_run        = %s", cfg.dry_run)
+    log.info("  spike_threshold = %.2f%%", cfg.spike_threshold_pct)
+    log.info("  profit_target  = %.1f%%", cfg.profit_target_pct)
+    log.info("  max_position   = $%.2f", cfg.max_position_usdc)
+    log.info("=" * 60)
+
+    # --- Initialise components ---
+    feed = BinanceFeed()
+    poly = PolymarketClient()
+    await poly.start()
+    strat = Strategy(feed, poly)
+
+    # --- Graceful shutdown ---
+    shutdown_event = asyncio.Event()
+
+    def _shutdown(*_):
+        log.info("Shutdown signal received")
+        feed.stop()
+        strat.stop()
+        shutdown_event.set()
+
+    loop = asyncio.get_running_loop()
+    for sig_name in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig_name, _shutdown)
+        except NotImplementedError:
+            pass  # Windows
+
+    # --- Build task list ---
+    tasks = [
+        asyncio.create_task(feed.run(), name="binance-feed"),
+        asyncio.create_task(strat.run(), name="strategy"),
+    ]
+
+    if not headless:
+        from bot.dashboard import run_dashboard
+        tasks.append(asyncio.create_task(run_dashboard(feed, strat), name="dashboard"))
+    else:
+        # In headless mode, just print a status line every 30 s
+        async def status_printer():
+            while not shutdown_event.is_set():
+                s = strat.stats
+                px = f"${feed.current_price:,.2f}" if feed.current_price else "n/a"
+                print(
+                    f"[STATUS] BTC={px}  signals={s.total_signals}  "
+                    f"trades={s.total_trades}  PnL=${s.total_pnl:+.2f}  "
+                    f"last={s.last_action or '-'}",
+                    flush=True,
+                )
+                await asyncio.sleep(30)
+        tasks.append(asyncio.create_task(status_printer(), name="status"))
+
+    # --- Run until shutdown ---
+    try:
+        await asyncio.gather(*tasks)
+    except asyncio.CancelledError:
+        pass
+    finally:
+        await poly.stop()
+        log.info("Bot stopped.")
+
+
+def cli():
+    parser = argparse.ArgumentParser(description="Binance-Polymarket BTC 5-min Arbitrage Bot")
+    parser.add_argument("--headless", action="store_true", help="Run without the terminal dashboard")
+    args = parser.parse_args()
+    asyncio.run(main(headless=args.headless))
+
+
+if __name__ == "__main__":
+    cli()
