@@ -135,7 +135,9 @@ class Strategy:
             move_pct = ((btc_price - ws.window_open_price) / ws.window_open_price) * 100
             self.stats.current_window = ws.market.question[:60]
 
-            if abs(move_pct) >= cfg.spike_threshold_pct:
+            # Don't buy in the last 20 seconds of the window
+            time_left = (ws.market.window_end - now) if ws.market.window_end else 999
+            if abs(move_pct) >= cfg.spike_threshold_pct and time_left > 20:
                 # Determine side: if BTC went UP → YES wins, if DOWN → NO wins
                 side = "YES" if move_pct > 0 else "NO"
                 ws.signal_fired = True

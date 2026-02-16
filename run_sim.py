@@ -206,7 +206,7 @@ async def sim_window(s: aiohttp.ClientSession, mkt: Mkt, num: int) -> Optional[P
                 dn_a, dn_a_s = await best_ask(s, mkt.down_tok)
                 log(f"  Poly asks: Up={up_a_s}  Down={dn_a_s}")
 
-            if abs(move) >= SPIKE_THRESHOLD_PCT:
+            if abs(move) >= SPIKE_THRESHOLD_PCT and left > 20:
                 side = "Up" if move > 0 else "Down"
                 tok = mkt.up_tok if side == "Up" else mkt.down_tok
                 col = G if side == "Up" else RD
