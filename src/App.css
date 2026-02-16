@@ -1,38 +1,517 @@
-.App {
-  text-align: center;
+/* ── Base ──────────────────────────────────────── */
+.app {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 20px 24px 60px;
 }
 
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
-  }
-}
-
-.App-header {
-  background-color: #282c34;
-  min-height: 100vh;
+/* ── Loading ──────────────────────────────────── */
+.loading-screen {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
+  height: 100vh;
+  gap: 16px;
 }
 
-.App-link {
-  color: #61dafb;
+.loading-screen p {
+  color: #8b8fa3;
+  font-size: 14px;
 }
 
-@keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
+.loading-pulse {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #3b82f6;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { transform: scale(0.8); opacity: 0.5; }
+  50% { transform: scale(1.2); opacity: 1; }
+}
+
+/* ── Header ───────────────────────────────────── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 0 24px;
+  border-bottom: 1px solid #1a1c24;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.header h1 {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+}
+
+.accent {
+  color: #f7931a;
+}
+
+.subtitle {
+  font-size: 13px;
+  color: #6b7085;
+  margin-top: 2px;
+  display: block;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.btc-price {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #12141c;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid #1e2030;
+}
+
+.btc-price .label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #f7931a;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.btc-price .price {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.last-update {
+  font-size: 12px;
+  color: #52566a;
+}
+
+.refresh-btn {
+  background: #1a1d2e;
+  color: #8b8fa3;
+  border: 1px solid #252840;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.refresh-btn:hover {
+  background: #252840;
+  color: #e1e4ea;
+  border-color: #3b82f6;
+  box-shadow: none;
+  transform: none;
+}
+
+.error-banner {
+  background: #2d1215;
+  border: 1px solid #5c2024;
+  color: #f87171;
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  font-size: 13px;
+}
+
+/* ── Stats Panel ──────────────────────────────── */
+.stats-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  background: #12141c;
+  border: 1px solid #1e2030;
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stat-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b7085;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.stat-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 22px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.stat-value.green { color: #34d399; }
+.stat-value.red { color: #f87171; }
+.green { color: #34d399; }
+.red { color: #f87171; }
+
+.stat-sub {
+  font-size: 11px;
+  color: #52566a;
+}
+
+/* ── Main Grid ────────────────────────────────── */
+.main-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-bottom: 32px;
+}
+
+@media (max-width: 900px) {
+  .main-grid {
+    grid-template-columns: 1fr;
   }
-  to {
-    transform: rotate(360deg);
-  }
+}
+
+.main-grid h2 {
+  font-size: 16px;
+  font-weight: 700;
+  color: #e1e4ea;
+  margin-bottom: 14px;
+  letter-spacing: -0.3px;
+}
+
+/* ── Markets Panel ────────────────────────────── */
+.markets-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.group-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: #3b82f6;
+  margin-bottom: 8px;
+  padding: 4px 8px;
+  background: #0f1219;
+  border-radius: 4px;
+  display: inline-block;
+}
+
+.market-card {
+  background: #12141c;
+  border: 1px solid #1e2030;
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 6px;
+  transition: border-color 0.2s;
+}
+
+.market-card:hover {
+  border-color: #2a2d45;
+}
+
+.market-card.mispriced {
+  border-color: #f59e0b;
+  background: #1a1710;
+}
+
+.market-question {
+  font-size: 13px;
+  font-weight: 500;
+  color: #c4c8d8;
+  margin-bottom: 8px;
+}
+
+.market-prices {
+  display: flex;
+  gap: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.up-price {
+  color: #34d399;
+}
+
+.down-price {
+  color: #f87171;
+}
+
+.sum-price {
+  color: #6b7085;
+  margin-left: auto;
+}
+
+.sum-price.alert {
+  color: #f59e0b;
+  font-weight: 700;
+}
+
+.market-vol {
+  font-size: 11px;
+  color: #52566a;
+  margin-top: 6px;
+}
+
+/* ── Arbitrage Panel ──────────────────────────── */
+.no-arb {
+  background: #12141c;
+  border: 1px solid #1e2030;
+  border-radius: 12px;
+  padding: 32px 24px;
+  text-align: center;
+}
+
+.no-arb-icon {
+  font-size: 40px;
+  margin-bottom: 12px;
+}
+
+.no-arb h3 {
+  font-size: 18px;
+  font-weight: 700;
+  color: #e1e4ea;
+  margin-bottom: 8px;
+}
+
+.no-arb p {
+  color: #6b7085;
+  font-size: 14px;
+  margin-bottom: 20px;
+}
+
+.best-times {
+  text-align: left;
+  background: #0f1118;
+  border-radius: 8px;
+  padding: 16px 20px;
+}
+
+.best-times h4 {
+  font-size: 13px;
+  font-weight: 600;
+  color: #8b8fa3;
+  margin-bottom: 10px;
+}
+
+.best-times ul {
+  list-style: none;
+  padding: 0;
+}
+
+.best-times li {
+  font-size: 13px;
+  color: #c4c8d8;
+  padding: 4px 0;
+  padding-left: 16px;
+  position: relative;
+}
+
+.best-times li::before {
+  content: "→";
+  position: absolute;
+  left: 0;
+  color: #3b82f6;
+}
+
+.arb-results {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.arb-section h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e1e4ea;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.arb-section .count {
+  background: #3b82f6;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.arb-card {
+  background: #12141c;
+  border: 1px solid #1e2030;
+  border-left: 3px solid #3b82f6;
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 8px;
+}
+
+.arb-market {
+  font-size: 13px;
+  font-weight: 600;
+  color: #c4c8d8;
+  margin-bottom: 4px;
+}
+
+.arb-type {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: #f59e0b;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.arb-detail {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: #8b8fa3;
+  margin-bottom: 4px;
+}
+
+.arb-strategy {
+  font-size: 13px;
+  color: #34d399;
+  line-height: 1.5;
+}
+
+.arb-profit {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  font-weight: 700;
+  color: #34d399;
+  margin-top: 4px;
+}
+
+/* ── Strategy Playbook ────────────────────────── */
+.playbook {
+  background: #12141c;
+  border: 1px solid #1e2030;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.playbook-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 24px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.playbook-header:hover {
+  background: #161822;
+}
+
+.playbook-header h2 {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.expand-icon {
+  color: #6b7085;
+  font-size: 14px;
+}
+
+.strategies-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  gap: 16px;
+  padding: 0 24px 24px;
+}
+
+.strategy-card {
+  background: #0f1118;
+  border: 1px solid #1a1d2e;
+  border-radius: 10px;
+  padding: 20px;
+}
+
+.strategy-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.strategy-icon {
+  font-size: 24px;
+}
+
+.strategy-header h3 {
+  font-size: 15px;
+  font-weight: 700;
+  color: #e1e4ea;
+}
+
+.strategy-meta {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.strategy-meta span {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+
+.risk {
+  background: #1a1215;
+  color: #f87171;
+  border: 1px solid #2d1215;
+}
+
+.edge {
+  background: #0f1a14;
+  color: #34d399;
+  border: 1px solid #152d1e;
+}
+
+.strategy-desc {
+  font-size: 13px;
+  color: #8b8fa3;
+  line-height: 1.6;
+  margin-bottom: 14px;
+}
+
+.strategy-steps h4 {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7085;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.strategy-steps ol {
+  padding-left: 18px;
+}
+
+.strategy-steps li {
+  font-size: 13px;
+  color: #c4c8d8;
+  padding: 3px 0;
+  line-height: 1.5;
 }
