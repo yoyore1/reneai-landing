@@ -138,15 +138,20 @@ class PolymarketClient:
         seen_cids: set = set()
         now = time.time()
 
-        # ── Method 1: Slug-based (current + next few 5-min slots) ──
+        # ── Method 1: Slug-based (current + next 2 windows) ──
+        # The bot re-discovers every 30s, so we only need to stay
+        # 1-2 windows ahead. This keeps API calls low (3 per cycle).
         try:
             current_slot = (int(now) // 300) * 300
-            for offset in range(-1, 5):  # check current and next 4 windows
+            for offset in range(0, 3):  # current, next, next+1
                 epoch = current_slot + offset * 300
                 slug = f"btc-updown-5m-{epoch}"
                 url = f"{self.GAMMA_API}/events?slug={slug}"
-                async with self._session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                    events = await resp.json()
+                try:
+                    async with self._session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                        events = await resp.json()
+                except Exception:
+                    continue
                 if not events:
                     continue
                 for m in events[0].get("markets", []):
