@@ -127,72 +127,112 @@ class PolymarketClient:
 
     async def find_active_btc_5min_markets(self) -> List[Market]:
         """
-        Query the Gamma API for currently-active BTC 5-minute markets.
-        These markets have titles like:
-          'Bitcoin above $XX,XXX.XX at HH:MM (5 min)'
-        or similar patterns. We search and parse.
+        Discover active BTC 5-minute markets using two methods:
+          1. Slug-based lookup (btc-updown-5m-{epoch}) -- most reliable
+          2. Keyword search fallback ("bitcoin" + "up or down")
         """
+        import json as _json
+        from datetime import datetime as _dt
+
         markets: List[Market] = []
+        seen_cids: set = set()
+        now = time.time()
+
+        # ── Method 1: Slug-based (current + next few 5-min slots) ──
+        try:
+            current_slot = (int(now) // 300) * 300
+            for offset in range(-1, 5):  # check current and next 4 windows
+                epoch = current_slot + offset * 300
+                slug = f"btc-updown-5m-{epoch}"
+                url = f"{self.GAMMA_API}/events?slug={slug}"
+                async with self._session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    events = await resp.json()
+                if not events:
+                    continue
+                for m in events[0].get("markets", []):
+                    cid = m.get("conditionId", "")
+                    if cid in seen_cids:
+                        continue
+                    raw_tokens = m.get("clobTokenIds", "[]")
+                    tokens = _json.loads(raw_tokens) if isinstance(raw_tokens, str) else raw_tokens
+                    if len(tokens) < 2:
+                        continue
+                    end_str = m.get("endDate", "")
+                    if not end_str:
+                        continue
+                    end_dt = _dt.fromisoformat(end_str.replace("Z", "+00:00"))
+                    end_ts = end_dt.timestamp()
+                    if end_ts < now:
+                        continue
+                    mkt = Market(
+                        condition_id=cid,
+                        question=m.get("question", ""),
+                        yes_token_id=tokens[0],
+                        no_token_id=tokens[1],
+                        active=True,
+                    )
+                    mkt.window_end = end_ts
+                    mkt.window_start = end_ts - 300
+                    mkt.reference_price = self._parse_reference_price(m.get("question", ""))
+                    markets.append(mkt)
+                    seen_cids.add(cid)
+        except Exception as exc:
+            log.warning("Slug-based discovery error: %s", exc)
+
+        # ── Method 2: Keyword fallback ──
         try:
             params = {
                 "closed": "false",
-                "limit": "50",
+                "limit": "100",
                 "order": "startDate",
                 "ascending": "false",
-                "tag": "crypto",
             }
             url = f"{self.GAMMA_API}/markets"
             async with self._session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 data = await resp.json()
 
-            now = time.time()
             for item in data:
                 title = item.get("question", "").lower()
-                # Match BTC / Bitcoin 5-minute price markets
+                cid = item.get("conditionId", item.get("condition_id", ""))
+                if cid in seen_cids:
+                    continue
                 is_btc_5min = (
                     ("bitcoin" in title or "btc" in title)
-                    and ("5 min" in title or "5-min" in title or "five min" in title)
+                    and "up or down" in title
+                    and "15" not in title  # skip 15-min markets
                 )
                 if not is_btc_5min:
                     continue
-
-                outcomes = item.get("outcomes", [])
-                tokens = item.get("clobTokenIds", item.get("clob_token_ids", []))
+                raw_tokens = item.get("clobTokenIds", item.get("clob_token_ids", "[]"))
+                tokens = _json.loads(raw_tokens) if isinstance(raw_tokens, str) else (raw_tokens if isinstance(raw_tokens, list) else [])
                 if len(tokens) < 2:
                     continue
-
+                end_date = item.get("endDate", "")
+                if not end_date:
+                    continue
+                try:
+                    end_dt = _dt.fromisoformat(end_date.replace("Z", "+00:00"))
+                    end_ts = end_dt.timestamp()
+                except Exception:
+                    continue
+                if end_ts < now:
+                    continue
                 mkt = Market(
-                    condition_id=item.get("conditionId", item.get("condition_id", "")),
+                    condition_id=cid,
                     question=item.get("question", ""),
                     yes_token_id=tokens[0],
                     no_token_id=tokens[1],
                     active=True,
                 )
-
-                # Try to parse reference price from the question
+                mkt.window_end = end_ts
+                mkt.window_start = end_ts - 300
                 mkt.reference_price = self._parse_reference_price(item.get("question", ""))
-
-                # Try to parse time window
-                end_date = item.get("endDate", "")
-                if end_date:
-                    try:
-                        from datetime import datetime
-                        dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
-                        mkt.window_end = dt.timestamp()
-                        mkt.window_start = mkt.window_end - 300  # 5 minutes before
-                    except Exception:
-                        pass
-
-                # Skip markets that already ended
-                if mkt.window_end and mkt.window_end < now:
-                    continue
-
                 markets.append(mkt)
-
-            log.info("Found %d active BTC 5-min markets", len(markets))
+                seen_cids.add(cid)
         except Exception as exc:
-            log.error("Market discovery failed: %s", exc, exc_info=True)
+            log.warning("Keyword discovery error: %s", exc)
 
+        log.info("Found %d active BTC 5-min markets", len(markets))
         return markets
 
     async def get_market_prices(self, market: Market) -> None:
