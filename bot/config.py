@@ -21,7 +21,10 @@ class Config:
     # before we consider it a tradable signal
     spike_threshold_pct: float = float(os.getenv("SPIKE_THRESHOLD_PCT", "0.15"))
 
-    # Target profit % on the Polymarket position before we sell
+    # If gain hits 20%+, let it ride (moonbag) with a trailing stop at 10%
+    moonbag_pct: float = float(os.getenv("MOONBAG_PCT", "20.0"))
+
+    # Normal profit target: sell between 10-20%
     profit_target_pct: float = float(os.getenv("PROFIT_TARGET_PCT", "10.0"))
 
     # If position drops below this %, enter protection mode

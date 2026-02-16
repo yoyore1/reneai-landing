@@ -15,10 +15,11 @@ We:
   1. Detect the Binance spike (price moved > threshold from window open).
   2. Buy the winning side on Polymarket immediately.
   3. Exit rules:
-     - PROFIT: Sell when position is up 10%.
-     - PROTECTION: If position ever drops past -15%, enter protection
-       mode.  In protection mode, sell when it recovers to -10%
-       (accept a small loss to avoid a catastrophic one).
+     - MOONBAG:    If gain hits +20%, let it ride.  Trailing stop at +10%.
+     - PROFIT:     If gain is between +10% and +20%, sell immediately.
+     - WAIT:       If gain is below +10%, keep holding.
+     - PROTECTION: If position drops past -15%, enter protection mode.
+                   Sell when it recovers to -10% (accept small loss).
 """
 
 import asyncio
@@ -192,14 +193,30 @@ class Strategy:
             now = time.time()
             window_ended = pos.market.window_end and now > pos.market.window_end
 
-            # --- Check if we should enter protection mode ---
+            # Track peak gain
+            if gain_pct > pos.peak_gain:
+                pos.peak_gain = gain_pct
+
+            # --- Mode transitions ---
+
+            # Moonbag: gain hits 20%+ → let it ride, trailing stop at 10%
+            if (not pos.moonbag_mode and not pos.protection_mode
+                    and gain_pct >= cfg.moonbag_pct):
+                pos.moonbag_mode = True
+                log.info(
+                    "MOONBAG MODE: %s hit +%.1f%%! Letting it ride, "
+                    "trailing stop at +%.1f%%",
+                    pos.side, gain_pct, cfg.profit_target_pct,
+                )
+                self.stats.last_action = f"MOONBAG {pos.side} +{gain_pct:.1f}%"
+
+            # Protection: drops past -15% → damage control
             if not pos.protection_mode and gain_pct <= cfg.drawdown_trigger_pct:
                 pos.protection_mode = True
+                pos.moonbag_mode = False
                 log.info(
-                    "PROTECTION MODE: %s dropped to %.1f%% (trigger=%.1f%%) "
-                    "| will sell at %.1f%%",
-                    pos.side, gain_pct, cfg.drawdown_trigger_pct,
-                    cfg.protection_exit_pct,
+                    "PROTECTION MODE: %s dropped to %.1f%% | will sell at %.1f%%",
+                    pos.side, gain_pct, cfg.protection_exit_pct,
                 )
                 self.stats.last_action = f"PROTECT {pos.side} @{gain_pct:.1f}%"
 
@@ -207,14 +224,24 @@ class Strategy:
             should_sell = False
             sell_reason = ""
 
-            if gain_pct >= cfg.profit_target_pct:
-                # Normal profit target
-                should_sell = True
-                sell_reason = f"PROFIT +{gain_pct:.1f}%"
-            elif pos.protection_mode and gain_pct >= cfg.protection_exit_pct:
-                # In protection mode: sell once we recover to -10%
-                should_sell = True
-                sell_reason = f"PROTECTION EXIT {gain_pct:.1f}%"
+            if pos.moonbag_mode:
+                # Was above 20%, trailing stop: sell if drops back to 10%
+                if gain_pct <= cfg.profit_target_pct:
+                    should_sell = True
+                    sell_reason = (
+                        f"MOONBAG STOP +{gain_pct:.1f}% "
+                        f"(peak +{pos.peak_gain:.1f}%)"
+                    )
+            elif pos.protection_mode:
+                # Was below -15%, sell when recovers to -10%
+                if gain_pct >= cfg.protection_exit_pct:
+                    should_sell = True
+                    sell_reason = f"PROTECTION EXIT {gain_pct:+.1f}%"
+            else:
+                # Normal: sell between 10% and 20%
+                if gain_pct >= cfg.profit_target_pct:
+                    should_sell = True
+                    sell_reason = f"PROFIT +{gain_pct:.1f}%"
 
             if should_sell:
                 log.info(

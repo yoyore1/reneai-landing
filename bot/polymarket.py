@@ -58,6 +58,8 @@ class Position:
     exit_price: Optional[float] = None
     pnl: Optional[float] = None
     protection_mode: bool = False  # True once position drops past drawdown trigger
+    moonbag_mode: bool = False     # True once gain hits 20%+, trailing stop at profit_target
+    peak_gain: float = 0.0        # highest gain % ever seen
 
 
 # ---------------------------------------------------------------------------

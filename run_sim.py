@@ -21,10 +21,11 @@ from typing import Optional, List, Tuple
 import aiohttp
 
 # ───── config ─────
-SPIKE_THRESHOLD_PCT  = 0.08
-PROFIT_TARGET_PCT    = 10.0
-DRAWDOWN_TRIGGER_PCT = -15.0   # enter protection mode if we drop this far
-PROTECTION_EXIT_PCT  = -10.0   # in protection mode, sell here to cut losses
+SPIKE_THRESHOLD_PCT  = 0.08     # BTC move % to trigger entry
+MOONBAG_PCT          = 20.0     # if gain hits this, let it ride
+PROFIT_TARGET_PCT    = 10.0     # normal sell target / trailing stop floor
+DRAWDOWN_TRIGGER_PCT = -15.0    # enter protection mode if we drop this far
+PROTECTION_EXIT_PCT  = -10.0    # in protection mode, sell here to cut losses
 MAX_POSITION_USDC    = 50.0
 POLL_SEC             = 1.5
 
@@ -64,6 +65,8 @@ class Pos:
     pnl: Optional[float] = None
     reason: str = ""
     protection_mode: bool = False   # True once we drop past DRAWDOWN_TRIGGER
+    moonbag_mode: bool = False      # True once gain hits 20%+, trailing stop at 10%
+    peak_gain: float = 0.0         # highest gain ever seen
     worst_pnl: float = 0.0         # track worst drawdown
 
 # ───── API calls ─────
@@ -252,44 +255,76 @@ async def sim_window(s: aiohttp.ClientSession, mkt: Mkt, num: int) -> Optional[P
             gain = ((bid_px - pos.entry) / pos.entry) * 100
             gc = G if gain >= 0 else RD
 
-            # Track worst drawdown
+            # Track peak and worst
+            if gain > pos.peak_gain:
+                pos.peak_gain = gain
             if gain < pos.worst_pnl:
                 pos.worst_pnl = gain
 
-            # Check if we enter protection mode
-            mode_str = ""
+            # ── Mode transitions ──
+
+            # Moonbag: if gain ever hits 20%+, let it ride with a 10% trailing stop
+            if not pos.moonbag_mode and not pos.protection_mode and gain >= MOONBAG_PCT:
+                pos.moonbag_mode = True
+                print()
+                log(f"{B}{G}*** MOONBAG MODE: gain hit {gain:+.1f}%! Letting it ride ***{R}")
+                log(f"{G}  Trailing stop at +{PROFIT_TARGET_PCT}% (will sell if it drops back to +{PROFIT_TARGET_PCT}%){R}")
+                print()
+
+            # Protection: if gain drops past -15%, switch to damage control
             if not pos.protection_mode and gain <= DRAWDOWN_TRIGGER_PCT:
                 pos.protection_mode = True
+                pos.moonbag_mode = False  # override moonbag if somehow both
                 print()
                 log(f"{B}{RD}*** PROTECTION MODE: dropped to {gain:+.1f}% (trigger={DRAWDOWN_TRIGGER_PCT}%) ***{R}")
                 log(f"{Y}  Will sell when position recovers to {PROTECTION_EXIT_PCT}%{R}")
                 print()
 
-            if pos.protection_mode:
-                mode_str = f" {Y}[PROTECT]{R}"
+            # Status label
+            mode_str = ""
+            if pos.moonbag_mode:
+                mode_str = f" {G}[MOONBAG peak={pos.peak_gain:+.1f}%]{R}"
+            elif pos.protection_mode:
+                mode_str = f" {Y}[PROTECT worst={pos.worst_pnl:+.1f}%]{R}"
 
             log(f"  {pos.side} pos: entry=${pos.entry:.3f} bid={bid_s} {gc}P&L={gain:+.1f}%{R}{mode_str}  BTC={mv_c}{move:+.4f}%{R}  left={left:.0f}s")
 
-            # Exit: profit target
-            if gain >= PROFIT_TARGET_PCT:
-                pos.exit_px = bid_px
-                pos.pnl = (bid_px - pos.entry) * pos.qty
-                pos.reason = f"PROFIT +{gain:.1f}%"
-                print()
-                log(f"{B}{G}*** SELL @ ${bid_px:.3f} | PnL: ${pos.pnl:+.2f} ({gain:+.1f}%) ***{R}")
-                print()
-                return pos
+            # ── Exit decisions ──
 
-            # Exit: protection mode recovery to -10%
-            if pos.protection_mode and gain >= PROTECTION_EXIT_PCT:
-                pos.exit_px = bid_px
-                pos.pnl = (bid_px - pos.entry) * pos.qty
-                pos.reason = f"PROTECTION EXIT {gain:+.1f}% (worst was {pos.worst_pnl:+.1f}%)"
-                print()
-                log(f"{B}{Y}*** PROTECTION SELL @ ${bid_px:.3f} | PnL: ${pos.pnl:+.2f} ({gain:+.1f}%) ***{R}")
-                log(f"  Took small loss to avoid bigger one (worst drawdown was {pos.worst_pnl:+.1f}%)")
-                print()
-                return pos
+            if pos.moonbag_mode:
+                # Was above 20%, now trailing stop: sell if drops to 10%
+                if gain <= PROFIT_TARGET_PCT:
+                    pos.exit_px = bid_px
+                    pos.pnl = (bid_px - pos.entry) * pos.qty
+                    pos.reason = f"MOONBAG STOP +{gain:.1f}% (peak was +{pos.peak_gain:.1f}%)"
+                    print()
+                    log(f"{B}{G}*** TRAILING STOP SELL @ ${bid_px:.3f} | PnL: ${pos.pnl:+.2f} ({gain:+.1f}%) ***{R}")
+                    log(f"  Peak was +{pos.peak_gain:.1f}%, sold on pullback to +{gain:.1f}%")
+                    print()
+                    return pos
+
+            elif pos.protection_mode:
+                # Was below -15%, sell when recovers to -10%
+                if gain >= PROTECTION_EXIT_PCT:
+                    pos.exit_px = bid_px
+                    pos.pnl = (bid_px - pos.entry) * pos.qty
+                    pos.reason = f"PROTECTION EXIT {gain:+.1f}% (worst was {pos.worst_pnl:+.1f}%)"
+                    print()
+                    log(f"{B}{Y}*** PROTECTION SELL @ ${bid_px:.3f} | PnL: ${pos.pnl:+.2f} ({gain:+.1f}%) ***{R}")
+                    log(f"  Took small loss to avoid bigger one (worst was {pos.worst_pnl:+.1f}%)")
+                    print()
+                    return pos
+
+            else:
+                # Normal mode: between 10% and 20% → sell
+                if gain >= PROFIT_TARGET_PCT:
+                    pos.exit_px = bid_px
+                    pos.pnl = (bid_px - pos.entry) * pos.qty
+                    pos.reason = f"PROFIT +{gain:.1f}%"
+                    print()
+                    log(f"{B}{G}*** SELL @ ${bid_px:.3f} | PnL: ${pos.pnl:+.2f} ({gain:+.1f}%) ***{R}")
+                    print()
+                    return pos
 
         await asyncio.sleep(POLL_SEC)
 
@@ -352,7 +387,7 @@ async def main():
             log(f"  {i}. {m.question}  ({m.start.strftime('%H:%M')}-{m.end.strftime('%H:%M')} UTC)")
 
         print()
-        log(f"Config: spike={SPIKE_THRESHOLD_PCT}%  target=+{PROFIT_TARGET_PCT}%  drawdown={DRAWDOWN_TRIGGER_PCT}%  protect_exit={PROTECTION_EXIT_PCT}%  size=${MAX_POSITION_USDC}")
+        log(f"Config: spike={SPIKE_THRESHOLD_PCT}%  sell=+{PROFIT_TARGET_PCT}-{MOONBAG_PCT}%  moonbag=+{MOONBAG_PCT}%(stop@+{PROFIT_TARGET_PCT}%)  protect={DRAWDOWN_TRIGGER_PCT}%(exit@{PROTECTION_EXIT_PCT}%)  size=${MAX_POSITION_USDC}")
         print()
 
         results: List[Optional[Pos]] = []

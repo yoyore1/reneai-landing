@@ -13,9 +13,12 @@ Binance updates BTC/USDT prices in **real time** (sub-second). Polymarket odds, 
 1. **Monitor Binance** -- WebSocket feed gives us the live BTC price every trade.
 2. **Detect spikes** -- When BTC moves more than a configurable threshold (default 0.15%) from the window-open price, the outcome is increasingly certain.
 3. **Buy on Polymarket** -- Immediately buy the winning side (Up if BTC spiked up, Down if it spiked down) at whatever price is available.
-4. **Sell at +10% profit** -- As other Polymarket traders catch up and the odds adjust, sell the position for a quick 10% gain.
-5. **Protection mode** -- If the position drops past -15%, the bot enters protection mode. Instead of hoping for profit, it now waits for the position to recover to -10% and sells there, accepting a small loss to prevent a catastrophic one.
-6. **Hold to resolution** -- If neither exit triggers before the window ends, the market resolves on-chain.
+4. **Exit tiers:**
+   - **+10% to +20%** -- Sell immediately, take profit.
+   - **+20% or higher** -- Moonbag mode. Let it ride, but set a trailing stop at +10%. If it drops from +25% back to +10%, sell there (still a win).
+   - **Below +10%** -- Keep waiting for it to reach +10%.
+   - **Drops past -15%** -- Protection mode. Stop hoping, start surviving. Sell when it recovers to -10% (small loss beats big loss).
+5. **Hold to resolution** -- If no exit triggers before the window ends, the market resolves on-chain.
 
 ```
 Binance: BTC jumps from $97,000 → $97,200 (+0.21%) in 90 seconds
@@ -23,11 +26,18 @@ Polymarket: "BTC above $97,000 at 12:35?" YES still priced at $0.55
 Bot: BUY Up @ $0.55
 ... 60 seconds later ...
 Polymarket: Up reprices to $0.85 as traders notice the move
-Bot: SELL Up @ $0.61 (+10.9% gain)
+Bot: SELL Up @ $0.61 (+10.9% gain)   ← normal profit
 
---- If it goes wrong: ---
+--- Moonbag scenario: ---
+Bot: BUY Up @ $0.50 (BTC spiked hard)
+Position hits +22% → MOONBAG MODE, let it ride!
+Position peaks at +30%, then pulls back...
+Position hits +10% → trailing stop triggers
+Bot: SELL Up @ $0.55 (+10% gain, rode the wave)
+
+--- Protection scenario: ---
 Bot: BUY Up @ $0.55 (BTC spiked up)
-BTC reverses... position drops to -18% → PROTECTION MODE activated
+BTC reverses... position drops to -18% → PROTECTION MODE
 BTC bounces back a little... position recovers to -10%
 Bot: SELL Up @ $0.495 (-10% loss, protected from worse)
 ```
@@ -73,7 +83,8 @@ cp .env.example .env
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SPIKE_THRESHOLD_PCT` | `0.15` | Minimum BTC move (%) from window open to trigger a buy |
-| `PROFIT_TARGET_PCT` | `10.0` | Sell when Polymarket position is up this % |
+| `MOONBAG_PCT` | `20.0` | If gain hits this %, let it ride (trailing stop at PROFIT_TARGET) |
+| `PROFIT_TARGET_PCT` | `10.0` | Sell between 10-20%, or trailing stop floor for moonbag |
 | `DRAWDOWN_TRIGGER_PCT` | `-15.0` | If position drops past this %, enter protection mode |
 | `PROTECTION_EXIT_PCT` | `-10.0` | In protection mode, sell at this % to cut losses |
 | `MAX_POSITION_USDC` | `50.0` | Max USDC to spend per trade |
