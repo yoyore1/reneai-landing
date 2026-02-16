@@ -1,70 +1,130 @@
-# Getting Started with Create React App
+# BTC 5-Minute Market Arbitrage Scanner
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+Real-time arbitrage scanner for Polymarket's **"Bitcoin Up or Down"** 5-minute prediction markets. Scans across multiple assets (BTC, ETH, SOL, XRP) and timeframes (5m, 15m, 4h) to find pricing inefficiencies.
 
-## Available Scripts
+## What Are These Markets?
 
-In the project directory, you can run:
+Polymarket runs rolling 5-minute binary markets on BTC price direction:
 
-### `npm start`
+- Every 5 minutes, a new market opens (e.g., "Bitcoin Up or Down - 12:30AM-12:35AM ET")
+- You buy **Up** if you think BTC price will be higher at 12:35 than at 12:30
+- You buy **Down** if you think it will be lower
+- Markets also exist for **15-minute** and **4-hour** windows
+- **ETH, SOL, XRP** also have 15-minute markets
+- Each side (Up/Down) is priced between 0c and 100c, and should sum to ~$1.00
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+## Quick Start
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+```bash
+# Install dependencies
+npm install
 
-### `npm test`
+# Run the CLI arbitrage scanner
+node scripts/arbitrage-scanner.js
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+# Run the React dashboard
+npm start
+```
 
-### `npm run build`
+## Arbitrage Strategies
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+### 1. Spread Arbitrage (Risk-Free)
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+If **Up + Down < $1.00**, buy both sides — one always resolves to $1.00, guaranteeing profit.
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+**When it happens:** New market creation (first 30 seconds), thin liquidity periods, market maker quote pulls.
 
-### `npm run eject`
+**Example:** Up @ 48c + Down @ 49c = 97c total cost → 3c guaranteed profit per share.
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+### 2. Cross-Timeframe Arbitrage (Low Risk)
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+The 15-minute market covers three consecutive 5-minute windows. After 1-2 windows resolve, the 15-min outcome is partially decided but may not reprice.
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+**How to execute:**
+1. Watch the first 5-min window within a 15-min block
+2. If BTC goes UP +0.3% in first 5 min, the 15-min "Up" probability is >60%
+3. If the 15-min market is still priced near 50c, buy "Up"
+4. Same logic extends to 4h blocks after several 15-min windows
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+### 3. Cross-Asset Correlation (Low-Medium Risk)
 
-## Learn More
+BTC, ETH, SOL, and XRP are 80-95% correlated on 15-minute timeframes.
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+**How to execute:**
+1. Monitor all four assets' 15-min markets simultaneously
+2. When BTC 15-min "Up" jumps to 58c after a pump...
+3. Check if ETH/SOL/XRP 15-min "Up" are still near 50c
+4. Buy "Up" on the lagging asset
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+### 4. Momentum Autocorrelation (~4% Edge)
 
-### Code Splitting
+BTC 5-minute candles show ~54% autocorrelation — the next candle tends to go the same direction as the previous one.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+**How to execute:**
+1. Check the last resolved 5-min candle direction
+2. If it was UP, buy "Up" on the next window at 50c
+3. If it was DOWN, buy "Down" on the next window at 50c
+4. Long-term positive EV of ~4 cents per dollar risked
 
-### Analyzing the Bundle Size
+### 5. Volatility Event Front-Run (Medium-High Risk, High Reward)
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+Before known volatility events (Fed, CPI, jobs data), place limit orders at extreme prices.
 
-### Making a Progressive Web App
+**How to execute:**
+1. Check economic calendar for upcoming events
+2. 5-10 minutes before: place limit orders at 40-45c on BOTH Up and Down
+3. The event moves BTC sharply — one side resolves near $1.00
+4. Total cost ~85-90c, payout $1.00 = 10-17% profit
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+### 6. Market Open Liquidity Snipe (Low-Medium Risk)
 
-### Advanced Configuration
+New 5-min markets open with very wide bid/ask spreads (1c/99c). Get in before makers tighten to 50c.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+**How to execute:**
+1. Watch for new market creation every 5 minutes
+2. Place limit order at 45-48c for your predicted direction
+3. As market makers post tighter quotes, book moves toward 50c
+4. You're in at a discount — even a 50/50 gives you 2-5c edge
 
-### Deployment
+## Live Data
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
+The scanner pulls data from:
+- **Polymarket Gamma API** — market prices, volumes, outcomes
+- **Polymarket CLOB API** — order book depth, bid/ask spreads
+- **CoinGecko API** — BTC price history for statistical baselines
 
-### `npm run build` fails to minify
+Key slug patterns for these markets:
+- `btc-updown-5m-{timestamp}` — BTC 5-minute
+- `btc-updown-15m-{timestamp}` — BTC 15-minute
+- `btc-updown-4h-{timestamp}` — BTC 4-hour
+- `eth-updown-15m-{timestamp}` — ETH 15-minute
+- `sol-updown-15m-{timestamp}` — SOL 15-minute
+- `xrp-updown-15m-{timestamp}` — XRP 15-minute
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+## Architecture
+
+```
+scripts/
+  arbitrage-scanner.js   # CLI scanner — run directly with Node.js
+src/
+  App.js                 # React dashboard — auto-refreshes every 30s
+  App.css                # Dark theme styling
+  index.js               # Entry point
+  index.css              # Global styles
+```
+
+## Dashboard Features
+
+- Real-time BTC price and 24h statistics (up/down ratio, momentum, volatility)
+- Active market listing across all assets and timeframes
+- Automatic arbitrage detection with actionable trade suggestions
+- Strategy playbook with step-by-step execution guides
+- Auto-refresh every 30 seconds
+
+## Important Notes
+
+- **Not financial advice.** Prediction markets carry risk. Past performance does not guarantee future results.
+- These markets have relatively thin liquidity ($3-15k per side), so large orders will move the price.
+- Polymarket charges fees on trades — factor this into arbitrage calculations.
+- The 54% momentum autocorrelation is based on short-term data and may not persist.
+- Cross-timeframe and cross-asset arbs are most profitable during active trading hours (US market hours).
