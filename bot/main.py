@@ -3,14 +3,16 @@
 Binance-Polymarket 5-Minute BTC Arbitrage Bot
 ==============================================
 
-Entry point.  Spins up three concurrent tasks:
+Entry point.  Spins up concurrent tasks:
   1. Binance real-time price feed (WebSocket)
   2. Strategy engine (spike detection + order management)
-  3. Terminal dashboard (Rich live display)
+  3. Terminal dashboard (Rich live display) OR web UI
+  4. Web dashboard server (always on at http://localhost:8899)
 
 Usage:
-    python -m bot.main              # with dashboard
-    python -m bot.main --headless   # logs only, no TUI
+    python -m bot.main              # terminal dashboard + web UI
+    python -m bot.main --headless   # logs only + web UI
+    python -m bot.main --web-only   # web UI only (no terminal dashboard)
 """
 
 import argparse
@@ -78,11 +80,16 @@ async def main(headless: bool = False):
         asyncio.create_task(strat.run(), name="strategy"),
     ]
 
+    # Web dashboard server (always runs)
+    from bot.server import DashboardServer
+    server = DashboardServer(feed, strat)
+    tasks.append(asyncio.create_task(server.run(), name="web-dashboard"))
+    log.info("Web dashboard will be at http://localhost:8899")
+
     if not headless:
         from bot.dashboard import run_dashboard
         tasks.append(asyncio.create_task(run_dashboard(feed, strat), name="dashboard"))
     else:
-        # In headless mode, just print a status line every 30 s
         async def status_printer():
             while not shutdown_event.is_set():
                 s = strat.stats
