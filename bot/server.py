@@ -4,18 +4,22 @@ Web server that streams live bot state to the React dashboard via WebSocket.
 Runs alongside the strategy as an asyncio task.
 Serves:
   - WebSocket at /ws  → pushes JSON state every second
-  - Static React build at /  (if available)
+  - React build at /  (SPA with index.html fallback)
 """
 
 import asyncio
 import json
 import logging
+import os
 import time
+from pathlib import Path
 from typing import Set
 
 from aiohttp import web
 
 log = logging.getLogger("server")
+
+BUILD_DIR = Path(__file__).resolve().parent.parent / "build"
 
 
 class DashboardServer:
@@ -30,8 +34,29 @@ class DashboardServer:
         self._app = web.Application()
         self._app.router.add_get("/ws", self._ws_handler)
         self._app.router.add_get("/api/state", self._state_handler)
-        # Serve React build if it exists
-        self._app.router.add_static("/", "build", show_index=True)
+        # Serve React build — static assets first, then SPA fallback
+        if BUILD_DIR.exists():
+            self._app.router.add_static("/static", str(BUILD_DIR / "static"))
+            self._app.router.add_get("/{path:.*}", self._spa_handler)
+            log.info("Serving React build from %s", BUILD_DIR)
+        else:
+            self._app.router.add_get("/", self._no_build_handler)
+            log.warning("No build/ folder found — run 'npm run build' first")
+
+    async def _spa_handler(self, request):
+        """Serve static files from build/, fall back to index.html for SPA routing."""
+        req_path = request.match_info.get("path", "")
+        file_path = BUILD_DIR / req_path
+        if req_path and file_path.exists() and file_path.is_file():
+            return web.FileResponse(file_path)
+        # SPA fallback — always serve index.html
+        return web.FileResponse(BUILD_DIR / "index.html")
+
+    async def _no_build_handler(self, request):
+        return web.Response(
+            text="<h2>Run <code>npm run build</code> first, then restart the bot.</h2>",
+            content_type="text/html",
+        )
 
     def _build_state(self) -> dict:
         """Assemble full bot state as a JSON-serializable dict."""
