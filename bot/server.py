@@ -1,69 +1,76 @@
 """
 Web server that streams live bot state to the React dashboard via WebSocket.
 
-Runs alongside the strategy as an asyncio task.
 Serves:
-  - WebSocket at /ws  → pushes JSON state every second
-  - React build at /  (SPA with index.html fallback)
+  - WebSocket at /ws  -> pushes full JSON state every second
+  - REST at /api/state -> snapshot
+  - React SPA build at /
 """
 
 import asyncio
+import collections
 import json
 import logging
-import os
 import time
 from pathlib import Path
 from typing import Set
 
 from aiohttp import web
 
+from bot.config import cfg
+
 log = logging.getLogger("server")
 
 BUILD_DIR = Path(__file__).resolve().parent.parent / "build"
+MAX_PRICE_HISTORY = 120   # ~2 min of 1-second ticks
+MAX_LOG_ENTRIES = 50
 
 
 class DashboardServer:
-    """Lightweight aiohttp server that exposes bot state over WebSocket."""
 
     def __init__(self, feed, strategy, host="0.0.0.0", port=8899):
         self._feed = feed
-        self._strategy = strategy
+        self._strat = strategy
         self._host = host
         self._port = port
         self._clients: Set[web.WebSocketResponse] = set()
+        self._start_time = time.time()
+        self._price_history = collections.deque(maxlen=MAX_PRICE_HISTORY)
+        self._event_log = collections.deque(maxlen=MAX_LOG_ENTRIES)
+
         self._app = web.Application()
         self._app.router.add_get("/ws", self._ws_handler)
         self._app.router.add_get("/api/state", self._state_handler)
-        # Serve React build — static assets first, then SPA fallback
         if BUILD_DIR.exists():
             self._app.router.add_static("/static", str(BUILD_DIR / "static"))
             self._app.router.add_get("/{path:.*}", self._spa_handler)
-            log.info("Serving React build from %s", BUILD_DIR)
         else:
             self._app.router.add_get("/", self._no_build_handler)
-            log.warning("No build/ folder found — run 'npm run build' first")
 
-    async def _spa_handler(self, request):
-        """Serve static files from build/, fall back to index.html for SPA routing."""
-        req_path = request.match_info.get("path", "")
-        file_path = BUILD_DIR / req_path
-        if req_path and file_path.exists() and file_path.is_file():
-            return web.FileResponse(file_path)
-        # SPA fallback — always serve index.html
-        return web.FileResponse(BUILD_DIR / "index.html")
+    # ── helpers ──
 
-    async def _no_build_handler(self, request):
-        return web.Response(
-            text="<h2>Run <code>npm run build</code> first, then restart the bot.</h2>",
-            content_type="text/html",
-        )
+    def push_event(self, kind: str, msg: str):
+        self._event_log.append({"ts": time.time(), "kind": kind, "msg": msg})
+
+    def _record_price(self):
+        if self._feed.current_price:
+            self._price_history.append({
+                "t": time.time(),
+                "p": self._feed.current_price,
+            })
+
+    # ── state builder ──
 
     def _build_state(self) -> dict:
-        """Assemble full bot state as a JSON-serializable dict."""
         feed = self._feed
-        strat = self._strategy
+        strat = self._strat
         s = strat.stats
+        now = time.time()
 
+        # BTC price history for sparkline
+        prices = list(self._price_history)
+
+        # Windows
         windows = []
         for cid, ws in list(strat._windows.items()):
             w = {
@@ -74,50 +81,86 @@ class DashboardServer:
                 "window_end": ws.market.window_end,
                 "signal_fired": ws.signal_fired,
                 "signal_side": ws.signal_side,
+                "move_pct": None,
+                "time_left": None,
+                "phase": "waiting",   # waiting | settling | active | closing | ended
             }
             if ws.window_open_price and feed.current_price:
                 w["move_pct"] = round(
                     ((feed.current_price - ws.window_open_price) / ws.window_open_price) * 100, 4
                 )
-            else:
-                w["move_pct"] = None
-
-            # Time left
             if ws.market.window_end:
-                w["time_left"] = max(0, ws.market.window_end - time.time())
-            else:
-                w["time_left"] = None
-
+                w["time_left"] = max(0, ws.market.window_end - now)
+            if ws.market.window_start:
+                elapsed = now - ws.market.window_start
+                remaining = (ws.market.window_end or 0) - now
+                if elapsed < 0:
+                    w["phase"] = "waiting"
+                elif elapsed < 10:
+                    w["phase"] = "settling"
+                elif remaining < 20:
+                    w["phase"] = "closing"
+                elif remaining <= 0:
+                    w["phase"] = "ended"
+                else:
+                    w["phase"] = "active"
             windows.append(w)
 
+        # Positions with live P&L
         positions = []
         for pos in strat._open_positions:
+            gain_pct = None
+            current_val = None
+            if pos.avg_entry > 0:
+                gain_pct = round(pos.peak_gain, 2)
             positions.append({
                 "side": pos.side,
                 "entry": pos.avg_entry,
                 "qty": pos.qty,
-                "age": round(time.time() - pos.entry_time),
+                "spent": round(pos.avg_entry * pos.qty, 2),
+                "age": round(now - pos.entry_time),
                 "protection_mode": pos.protection_mode,
                 "moonbag_mode": pos.moonbag_mode,
                 "peak_gain": round(pos.peak_gain, 2),
-                "market": pos.market.question[:50],
+                "market": pos.market.question,
             })
 
+        # Closed trades with extra detail
         closed = []
-        for pos in strat._closed_positions[-20:]:
+        for pos in strat._closed_positions[-30:]:
+            entry_cost = pos.avg_entry * pos.qty
             closed.append({
                 "side": pos.side,
                 "entry": pos.avg_entry,
                 "exit": pos.exit_price,
                 "qty": pos.qty,
+                "spent": round(entry_cost, 2),
                 "pnl": round(pos.pnl, 2) if pos.pnl is not None else None,
-                "market": pos.market.question[:50],
+                "pnl_pct": round(((pos.exit_price - pos.avg_entry) / pos.avg_entry) * 100, 1) if pos.exit_price and pos.avg_entry else None,
+                "market": pos.market.question,
             })
 
+        # Computed aggregates
+        wins_pnl = [t["pnl"] for t in closed if t["pnl"] is not None and t["pnl"] >= 0]
+        loss_pnl = [t["pnl"] for t in closed if t["pnl"] is not None and t["pnl"] < 0]
+        total_trades = s.wins + s.losses
+        win_rate = round((s.wins / total_trades) * 100, 1) if total_trades > 0 else 0
+
         return {
-            "ts": time.time(),
+            "ts": now,
+            "uptime": round(now - self._start_time),
             "btc_price": feed.current_price,
             "btc_live": feed.is_live,
+            "price_history": prices,
+            "config": {
+                "spike_threshold": cfg.spike_threshold_pct,
+                "profit_target": cfg.profit_target_pct,
+                "moonbag": cfg.moonbag_pct,
+                "drawdown_trigger": cfg.drawdown_trigger_pct,
+                "protection_exit": cfg.protection_exit_pct,
+                "max_position": cfg.max_position_usdc,
+                "dry_run": cfg.dry_run,
+            },
             "stats": {
                 "signals": s.total_signals,
                 "trades": s.total_trades,
@@ -126,31 +169,52 @@ class DashboardServer:
                 "losses": s.losses,
                 "pnl": round(s.total_pnl, 2),
                 "last_action": s.last_action,
+                "win_rate": win_rate,
+                "avg_win": round(sum(wins_pnl) / len(wins_pnl), 2) if wins_pnl else 0,
+                "avg_loss": round(sum(loss_pnl) / len(loss_pnl), 2) if loss_pnl else 0,
+                "best_trade": round(max(wins_pnl), 2) if wins_pnl else 0,
+                "worst_trade": round(min(loss_pnl), 2) if loss_pnl else 0,
             },
             "windows": windows,
             "positions": positions,
             "closed": closed,
+            "events": list(self._event_log),
         }
+
+    # ── handlers ──
+
+    async def _spa_handler(self, request):
+        req_path = request.match_info.get("path", "")
+        file_path = BUILD_DIR / req_path
+        if req_path and file_path.exists() and file_path.is_file():
+            return web.FileResponse(file_path)
+        return web.FileResponse(BUILD_DIR / "index.html")
+
+    async def _no_build_handler(self, request):
+        return web.Response(
+            text="<h2>Run <code>npm run build</code> first, then restart the bot.</h2>",
+            content_type="text/html",
+        )
 
     async def _ws_handler(self, request):
         ws = web.WebSocketResponse()
         await ws.prepare(request)
         self._clients.add(ws)
         log.info("Dashboard client connected (%d total)", len(self._clients))
+        self.push_event("connect", "Dashboard client connected")
         try:
             async for msg in ws:
-                pass  # client doesn't send us anything
+                pass
         finally:
             self._clients.discard(ws)
-            log.info("Dashboard client disconnected (%d total)", len(self._clients))
         return ws
 
     async def _state_handler(self, request):
         return web.json_response(self._build_state())
 
     async def _broadcast_loop(self):
-        """Push state to all connected WebSocket clients every second."""
         while True:
+            self._record_price()
             if self._clients:
                 state = json.dumps(self._build_state())
                 dead = set()
@@ -168,4 +232,5 @@ class DashboardServer:
         site = web.TCPSite(runner, self._host, self._port)
         await site.start()
         log.info("Dashboard server running at http://%s:%d", self._host, self._port)
+        self.push_event("start", f"Bot started (dry_run={cfg.dry_run})")
         await self._broadcast_loop()
