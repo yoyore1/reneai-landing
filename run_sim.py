@@ -11,17 +11,19 @@ All trades are paper (simulated). No keys needed.
 """
 
 import asyncio
+import collections
 import json
 import time
 import sys
 from datetime import datetime, timezone, timedelta
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, List, Tuple
 
 import aiohttp
 
 # ───── config ─────
-SPIKE_THRESHOLD_PCT  = 0.03     # BTC move % to trigger entry (~$20 on $68k BTC)
+SPIKE_MOVE_USD       = 20.0     # BTC must move this many $ ...
+SPIKE_WINDOW_SEC     = 3.0      # ... within this many seconds
 MOONBAG_PCT          = 20.0     # if gain hits this, let it ride
 PROFIT_TARGET_PCT    = 10.0     # normal sell target / trailing stop floor
 DRAWDOWN_TRIGGER_PCT = -15.0    # enter protection mode if we drop this far
@@ -183,6 +185,8 @@ async def sim_window(s: aiohttp.ClientSession, mkt: Mkt, num: int) -> Optional[P
 
     pos: Optional[Pos] = None
     tick = 0
+    # Rolling price buffer for spike detection: (timestamp, price)
+    price_buf = collections.deque(maxlen=100)
 
     while datetime.now(timezone.utc) < mkt.end:
         px = await btc_price(s)
@@ -190,15 +194,28 @@ async def sim_window(s: aiohttp.ClientSession, mkt: Mkt, num: int) -> Optional[P
             await asyncio.sleep(POLL_SEC)
             continue
 
+        now_t = time.time()
+        price_buf.append((now_t, px))
+
         move = ((px - open_px) / open_px) * 100
         mv_c = G if move >= 0 else RD
         left = (mkt.end - datetime.now(timezone.utc)).total_seconds()
         tick += 1
 
+        # Detect spike: find price from SPIKE_WINDOW_SEC ago in buffer
+        spike_delta = None
+        cutoff = now_t - SPIKE_WINDOW_SEC
+        for buf_t, buf_px in price_buf:
+            if buf_t >= cutoff:
+                spike_delta = px - buf_px
+                break
+        if spike_delta is not None and abs(spike_delta) < SPIKE_MOVE_USD:
+            spike_delta = None  # not big enough
+
         if pos is None:
             # ── Waiting for signal ──
-            # Every tick print price
-            log(f"BTC ${px:,.2f}  {mv_c}{move:+.4f}%{R}  left={left:.0f}s")
+            spike_str = f"  3s-move=${spike_delta:+.0f}" if spike_delta else ""
+            log(f"BTC ${px:,.2f}  {mv_c}{move:+.4f}%{R}  left={left:.0f}s{spike_str}")
 
             # Also check if the Polymarket book has tightened
             if tick % 3 == 0:
@@ -206,29 +223,23 @@ async def sim_window(s: aiohttp.ClientSession, mkt: Mkt, num: int) -> Optional[P
                 dn_a, dn_a_s = await best_ask(s, mkt.down_tok)
                 log(f"  Poly asks: Up={up_a_s}  Down={dn_a_s}")
 
-            if abs(move) >= SPIKE_THRESHOLD_PCT and left > 20:
-                side = "Up" if move > 0 else "Down"
+            if spike_delta is not None and left > 20:
+                side = "Up" if spike_delta > 0 else "Down"
                 tok = mkt.up_tok if side == "Up" else mkt.down_tok
                 col = G if side == "Up" else RD
 
                 print()
-                log(f"{B}{col}*** SPIKE DETECTED: BTC {move:+.4f}% → BUY {side.upper()} ***{R}")
+                log(f"{B}{col}*** SPIKE: ${spike_delta:+.0f} in {SPIKE_WINDOW_SEC}s → BUY {side.upper()} ***{R}")
 
                 # Get real ask
                 ask, ask_s = await best_ask(s, tok)
                 bk_s = await full_book_str(s, tok)
                 log(f"  {side} full book: {bk_s}")
 
-                # If book is thin (ask > 0.90), model a realistic fill
-                # In practice the market makers put up ~0.50 odds at window start
-                # and shift based on BTC movement
                 if ask is None or ask > 0.90:
-                    # Model: if BTC moved 0.08-0.15%, true probability shifted to ~55-65%
-                    # Poly market lags, so we'd fill at ~0.50-0.55
-                    modeled = 0.52 + abs(move) * 0.5  # rough model
+                    modeled = 0.52 + (abs(spike_delta) / 100) * 0.5
                     modeled = min(modeled, 0.65)
                     log(f"{Y}  Book too wide (ask={ask_s}). Using modeled fill @ ${modeled:.3f}{R}")
-                    log(f"  (Real market makers would be offering here in an active session){R}")
                     ask = modeled
 
                 qty = MAX_POSITION_USDC / ask
@@ -393,7 +404,7 @@ async def main():
             log(f"  {i}. {m.question}  ({m.start.strftime('%H:%M')}-{m.end.strftime('%H:%M')} UTC)")
 
         print()
-        log(f"Config: spike={SPIKE_THRESHOLD_PCT}%  sell=+{PROFIT_TARGET_PCT}-{MOONBAG_PCT}%  moonbag=+{MOONBAG_PCT}%(stop@+{PROFIT_TARGET_PCT}%)  protect={DRAWDOWN_TRIGGER_PCT}%(exit@{PROTECTION_EXIT_PCT}%)  size=${MAX_POSITION_USDC}")
+        log(f"Config: spike=${SPIKE_MOVE_USD:.0f}/{SPIKE_WINDOW_SEC:.0f}s  sell=+{PROFIT_TARGET_PCT}-{MOONBAG_PCT}%  moonbag=+{MOONBAG_PCT}%(stop@+{PROFIT_TARGET_PCT}%)  protect={DRAWDOWN_TRIGGER_PCT}%(exit@{PROTECTION_EXIT_PCT}%)  size=${MAX_POSITION_USDC}")
         print()
 
         results: List[Optional[Pos]] = []

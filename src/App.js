@@ -325,7 +325,7 @@ function SettingsTab({ config, events, uptime, stats }) {
       <h3 className="section-title">Strategy Config</h3>
       <div className="config-card">
         <ConfigRow label="Mode" value={config.dry_run ? "DRY RUN (Paper)" : "LIVE TRADING"} cls={config.dry_run ? "yellow" : "red"} />
-        <ConfigRow label="Spike Threshold" value={`${config.spike_threshold}%`} sub={`~$${(config.spike_threshold / 100 * 68000).toFixed(0)} on $68k BTC`} />
+        <ConfigRow label="Spike Trigger" value={`$${config.spike_move_usd} in ${config.spike_window_sec}s`} sub="Must move this fast to signal" />
         <ConfigRow label="Profit Target" value={`+${config.profit_target}%`} cls="green" />
         <ConfigRow label="Moonbag Trigger" value={`+${config.moonbag}%`} sub={`Trail stop at +${config.profit_target}%`} cls="green" />
         <ConfigRow label="Drawdown Trigger" value={`${config.drawdown_trigger}%`} cls="red" />

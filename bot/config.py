@@ -17,9 +17,9 @@ class Config:
     poly_api_passphrase: str = os.getenv("POLY_API_PASSPHRASE", "")
     poly_private_key: str = os.getenv("POLY_PRIVATE_KEY", "")
 
-    # Spike detection: minimum % move from window-open price on Binance
-    # before we consider it a tradable signal
-    spike_threshold_pct: float = float(os.getenv("SPIKE_THRESHOLD_PCT", "0.03"))
+    # Spike detection: $X move within Y seconds = real momentum
+    spike_move_usd: float = float(os.getenv("SPIKE_MOVE_USD", "20.0"))
+    spike_window_sec: float = float(os.getenv("SPIKE_WINDOW_SEC", "3.0"))
 
     # If gain hits 20%+, let it ride (moonbag) with a trailing stop at 10%
     moonbag_pct: float = float(os.getenv("MOONBAG_PCT", "20.0"))

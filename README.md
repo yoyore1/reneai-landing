@@ -82,7 +82,8 @@ cp .env.example .env
 |----------|---------|-------------|
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SPIKE_THRESHOLD_PCT` | `0.15` | Minimum BTC move (%) from window open to trigger a buy |
+| `SPIKE_MOVE_USD` | `20.0` | BTC must move this many dollars... |
+| `SPIKE_WINDOW_SEC` | `3.0` | ...within this many seconds to trigger a buy |
 | `MOONBAG_PCT` | `20.0` | If gain hits this %, let it ride (trailing stop at PROFIT_TARGET) |
 | `PROFIT_TARGET_PCT` | `10.0` | Sell between 10-20%, or trailing stop floor for moonbag |
 | `DRAWDOWN_TRIGGER_PCT` | `-15.0` | If position drops past this %, enter protection mode |

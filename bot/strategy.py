@@ -84,8 +84,8 @@ class Strategy:
 
     async def run(self):
         self._running = True
-        log.info("Strategy started  |  spike_threshold=%.2f%%  profit_target=%.1f%%  dry_run=%s",
-                 cfg.spike_threshold_pct, cfg.profit_target_pct, cfg.dry_run)
+        log.info("Strategy started  |  spike=$%.0f/%0.fs  profit_target=%.1f%%  dry_run=%s",
+                 cfg.spike_move_usd, cfg.spike_window_sec, cfg.profit_target_pct, cfg.dry_run)
 
         while self._running:
             try:
@@ -131,22 +131,26 @@ class Strategy:
             if ws.window_open_price is None or ws.signal_fired:
                 continue
 
-            # Calculate move from window open
-            move_pct = ((btc_price - ws.window_open_price) / ws.window_open_price) * 100
             self.stats.current_window = ws.market.question[:60]
 
             # Don't buy in the last 20 seconds of the window
             time_left = (ws.market.window_end - now) if ws.market.window_end else 999
-            if abs(move_pct) >= cfg.spike_threshold_pct and time_left > 20:
-                # Determine side: if BTC went UP → YES wins, if DOWN → NO wins
-                side = "YES" if move_pct > 0 else "NO"
+            if time_left <= 20:
+                continue
+
+            # Spike detection: $X move within Y seconds (real momentum)
+            spike_delta = self.feed.detect_spike(cfg.spike_move_usd, cfg.spike_window_sec)
+            if spike_delta is not None:
+                side = "YES" if spike_delta > 0 else "NO"
                 ws.signal_fired = True
                 ws.signal_side = side
                 self.stats.total_signals += 1
-                self.stats.current_signal = f"{'UP' if side == 'YES' else 'DOWN'} {move_pct:+.3f}%"
+                self.stats.current_signal = f"{'UP' if side == 'YES' else 'DOWN'} ${spike_delta:+.0f} in {cfg.spike_window_sec}s"
                 log.info(
-                    "SIGNAL: BTC %+.3f%% from $%.2f → $%.2f  |  Buy %s on %s",
-                    move_pct, ws.window_open_price, btc_price, side, ws.market.question[:50],
+                    "SIGNAL: BTC %+$.0f in %.0fs ($%.2f → $%.2f)  |  Buy %s on %s",
+                    spike_delta, cfg.spike_window_sec,
+                    btc_price - spike_delta, btc_price,
+                    side, ws.market.question[:50],
                 )
 
                 # Fetch latest Polymarket prices

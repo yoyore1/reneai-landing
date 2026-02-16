@@ -153,7 +153,8 @@ class DashboardServer:
             "btc_live": feed.is_live,
             "price_history": prices,
             "config": {
-                "spike_threshold": cfg.spike_threshold_pct,
+                "spike_move_usd": cfg.spike_move_usd,
+                "spike_window_sec": cfg.spike_window_sec,
                 "profit_target": cfg.profit_target_pct,
                 "moonbag": cfg.moonbag_pct,
                 "drawdown_trigger": cfg.drawdown_trigger_pct,
