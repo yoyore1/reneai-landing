@@ -299,9 +299,18 @@ async def main():
     print(f"╚════════════════════════════════════════════════════════════════════╝{R}")
     print()
 
-    # The 3 target windows: 1:25, 1:30, 1:35 PM ET on Feb 16
-    # epoch = start of each 5-min window in UTC
-    target_epochs = [1771266300, 1771266600, 1771266900]
+    # Auto-detect next 3 upcoming 5-min windows based on current time
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    # Polymarket 5-min windows align to 5-min boundaries (epoch % 300 == 0)
+    current_slot = (now_ts // 300) * 300
+    # Start from the next upcoming slot
+    next_slot = current_slot + 300
+    target_epochs = [next_slot, next_slot + 300, next_slot + 600]
+    
+    for i, ep in enumerate(target_epochs):
+        dt = datetime.fromtimestamp(ep, tz=timezone.utc)
+        et = dt - timedelta(hours=5)
+        log(f"  Target {i+1}: {et.strftime('%I:%M %p')} ET (epoch {ep})")
 
     async with aiohttp.ClientSession() as s:
         px = await btc_price(s)
