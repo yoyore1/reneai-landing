@@ -162,13 +162,19 @@ async def sim_window(s: aiohttp.ClientSession, mkt: Mkt, num: int) -> Optional[P
             else:
                 await asyncio.sleep(min(1, left))
 
-    # ── Window is open ──
+    # ── Window is open — wait 10s before tracking ──
     open_px = await btc_price(s)
     if not open_px:
         log(f"{RD}No BTC price, skipping window{R}")
         return None
 
     log(f"{B}WINDOW OPEN | BTC = ${open_px:,.2f}{R}")
+    log(f"{Y}Waiting 10s before trading (letting market settle)...{R}")
+    await asyncio.sleep(10)
+
+    # Re-read BTC price after the 10s wait — this is our real baseline
+    open_px = await btc_price(s) or open_px
+    log(f"{B}READY | BTC baseline = ${open_px:,.2f}{R}")
 
     # snapshot Polymarket books
     for label, tok in [("Up", mkt.up_tok), ("Down", mkt.down_tok)]:

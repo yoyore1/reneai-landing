@@ -120,13 +120,13 @@ class Strategy:
                 self._windows.pop(cid, None)
                 continue
 
-            # Record the BTC price at the start of the window
+            # Record the BTC price 10s after the window opens (let market settle)
             if ws.window_open_price is None:
-                if ws.market.window_start and now >= ws.market.window_start:
+                ready_time = (ws.market.window_start or 0) + 10
+                if now >= ready_time:
                     ws.window_open_price = btc_price
-                    log.info("Window open price set: $%.2f for %s", btc_price, ws.market.question[:50])
-                elif not ws.market.window_start:
-                    ws.window_open_price = btc_price
+                    log.info("Window baseline set (10s delay): $%.2f for %s",
+                             btc_price, ws.market.question[:50])
 
             if ws.window_open_price is None or ws.signal_fired:
                 continue
