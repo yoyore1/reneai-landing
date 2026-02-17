@@ -230,7 +230,16 @@ class Strategy:
             should_sell = False
             sell_reason = ""
 
-            if pos.moonbag_mode:
+            # HARD STOP — no exceptions, sell immediately
+            if gain_pct <= cfg.hard_stop_pct:
+                should_sell = True
+                sell_reason = f"HARD STOP {gain_pct:.1f}% (limit={cfg.hard_stop_pct}%)"
+                log.warning(
+                    "HARD STOP: %s at %.1f%% — emergency sell",
+                    pos.side, gain_pct,
+                )
+
+            elif pos.moonbag_mode:
                 # Was above 20%, trailing stop: sell if drops back to 10%
                 if gain_pct <= cfg.profit_target_pct:
                     should_sell = True

@@ -28,6 +28,7 @@ MOONBAG_PCT          = 20.0     # if gain hits this, let it ride
 PROFIT_TARGET_PCT    = 10.0     # normal sell target / trailing stop floor
 DRAWDOWN_TRIGGER_PCT = -15.0    # enter protection mode if we drop this far
 PROTECTION_EXIT_PCT  = -10.0    # in protection mode, sell here to cut losses
+HARD_STOP_PCT        = -25.0    # absolute floor — sell immediately, no exceptions
 MAX_POSITION_USDC    = 50.0
 POLL_SEC             = 1.5
 
@@ -308,7 +309,18 @@ async def sim_window(s: aiohttp.ClientSession, mkt: Mkt, num: int) -> Optional[P
 
             # ── Exit decisions ──
 
-            if pos.moonbag_mode:
+            # HARD STOP — no exceptions
+            if gain <= HARD_STOP_PCT:
+                pos.exit_px = bid_px
+                pos.pnl = (bid_px - pos.entry) * pos.qty
+                pos.reason = f"HARD STOP {gain:+.1f}%"
+                print()
+                log(f"{B}{RD}*** HARD STOP SELL @ ${bid_px:.3f} | PnL: ${pos.pnl:+.2f} ({gain:+.1f}%) ***{R}")
+                log(f"  Emergency exit — hit {HARD_STOP_PCT}% floor")
+                print()
+                return pos
+
+            elif pos.moonbag_mode:
                 # Was above 20%, now trailing stop: sell if drops to 10%
                 if gain <= PROFIT_TARGET_PCT:
                     pos.exit_px = bid_px

@@ -331,6 +331,7 @@ function SettingsTab({ config, events, uptime, stats }) {
         <ConfigRow label="Moonbag Trigger" value={`+${config.moonbag}%`} sub={`Trail stop at +${config.profit_target}%`} cls="green" />
         <ConfigRow label="Drawdown Trigger" value={`${config.drawdown_trigger}%`} cls="red" />
         <ConfigRow label="Protection Exit" value={`${config.protection_exit}%`} sub="Sell here to cut losses" cls="yellow" />
+        <ConfigRow label="Hard Stop" value={`${config.hard_stop}%`} sub="Emergency sell — no exceptions" cls="red" />
         <ConfigRow label="Max Position" value={`$${config.max_position}`} />
       </div>
 
@@ -340,7 +341,8 @@ function SettingsTab({ config, events, uptime, stats }) {
         <div className="rule"><span className="rule-zone rule-moon">+20%+</span><span className="rule-desc">MOONBAG — let it ride, trailing stop at +10%</span></div>
         <div className="rule"><span className="rule-zone rule-profit">+10-20%</span><span className="rule-desc">SELL — take profit immediately</span></div>
         <div className="rule"><span className="rule-zone rule-wait">0-10%</span><span className="rule-desc">HOLD — wait for +10%</span></div>
-        <div className="rule"><span className="rule-zone rule-danger">-15%+</span><span className="rule-desc">PROTECT — sell at -10% to limit damage</span></div>
+        <div className="rule"><span className="rule-zone rule-danger">-15%</span><span className="rule-desc">PROTECT — sell at -10% to limit damage</span></div>
+        <div className="rule"><span className="rule-zone rule-danger">-25%</span><span className="rule-desc">HARD STOP — sell immediately, no exceptions</span></div>
       </div>
 
       {/* Session Info */}

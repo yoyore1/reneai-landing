@@ -159,6 +159,7 @@ class DashboardServer:
                 "moonbag": cfg.moonbag_pct,
                 "drawdown_trigger": cfg.drawdown_trigger_pct,
                 "protection_exit": cfg.protection_exit_pct,
+                "hard_stop": cfg.hard_stop_pct,
                 "max_position": cfg.max_position_usdc,
                 "dry_run": cfg.dry_run,
             },
