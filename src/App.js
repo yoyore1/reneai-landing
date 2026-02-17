@@ -243,6 +243,21 @@ function DashTab({ stats, windows, positions, priceHistory, config }) {
         {stats.last_action && <div className="pnl-action">{stats.last_action}</div>}
       </div>
 
+      {/* Hourly P&L */}
+      {stats.hourly_pnl && Object.keys(stats.hourly_pnl).length > 0 && (
+        <>
+          <h3 className="section-title">Hourly P&L</h3>
+          <div className="hourly-grid">
+            {Object.entries(stats.hourly_pnl).reverse().map(([hour, pnl]) => (
+              <div key={hour} className={`hourly-card ${pnl >= 0 ? "hourly-win" : "hourly-loss"}`}>
+                <span className="hourly-time">{hour.split(" ")[1] || hour}</span>
+                <span className={`hourly-val ${pnl >= 0 ? "green" : "red"}`}>{fPnl(pnl)}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
       {/* Open Positions */}
       <h3 className="section-title">Open Positions <span className="title-count">{positions.length}</span></h3>
       {positions.length === 0 ? (
@@ -479,6 +494,21 @@ function S2DashTab({ s2 }) {
         </div>
         {st.last_action && <div className="pnl-action">{st.last_action}</div>}
       </div>
+
+      {/* Hourly P&L */}
+      {st.hourly_pnl && Object.keys(st.hourly_pnl).length > 0 && (
+        <>
+          <h3 className="section-title">Hourly P&L</h3>
+          <div className="hourly-grid">
+            {Object.entries(st.hourly_pnl).reverse().map(([hour, pnl]) => (
+              <div key={hour} className={`hourly-card ${pnl >= 0 ? "hourly-win" : "hourly-loss"}`}>
+                <span className="hourly-time">{hour.split(" ")[1] || hour}</span>
+                <span className={`hourly-val ${pnl >= 0 ? "green" : "red"}`}>{fPnl(pnl)}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       {/* How it works */}
       <div className="rules-card">

@@ -269,6 +269,17 @@ body {
 .log-trade { background:var(--purple-bg); color:var(--purple); }
 .log-msg { color:var(--text); flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
+/* ═══ HOURLY P&L ═══ */
+.hourly-grid { display:flex; gap:0.4rem; overflow-x:auto; padding-bottom:0.3rem; margin-bottom:0.5rem; }
+.hourly-card {
+  flex-shrink:0; background:var(--bg2); border:1px solid var(--border); border-radius:8px;
+  padding:0.4rem 0.6rem; text-align:center; min-width:4.5rem;
+}
+.hourly-win { border-left:2px solid var(--green); }
+.hourly-loss { border-left:2px solid var(--red); }
+.hourly-time { display:block; font-size:0.5rem; color:var(--dim); font-weight:600; }
+.hourly-val { display:block; font-size:0.8rem; font-weight:800; font-variant-numeric:tabular-nums; }
+
 /* ═══ Desktop ═══ */
 @media (min-width:768px) {
   .topbar { padding:0.6rem 1.5rem; padding-top:0.6rem; }

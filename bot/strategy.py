@@ -26,6 +26,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Optional, List, Dict
 
 from bot.config import cfg
@@ -57,6 +58,8 @@ class StrategyStats:
     current_window: str = ""
     current_signal: str = ""
     last_action: str = ""
+    hourly_pnl: dict = field(default_factory=dict)
+    last_hour_report: str = ""
 
 
 class Strategy:
@@ -240,6 +243,7 @@ class Strategy:
                 if sold:
                     self.stats.total_exits += 1
                     self.stats.total_pnl += pos.pnl or 0
+                    self._record_hourly_pnl(pos.pnl or 0)
                     if (pos.pnl or 0) >= 0:
                         self.stats.wins += 1
                     else:
@@ -258,6 +262,7 @@ class Strategy:
                 pos.pnl = (bid - pos.avg_entry) * pos.qty
                 self.stats.total_exits += 1
                 self.stats.total_pnl += pos.pnl
+                self._record_hourly_pnl(pos.pnl)
                 if pos.pnl >= 0:
                     self.stats.wins += 1
                 else:
@@ -268,3 +273,7 @@ class Strategy:
                 still_open.append(pos)
 
         self._open_positions = still_open
+
+    def _record_hourly_pnl(self, pnl: float):
+        hour_key = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:00")
+        self.stats.hourly_pnl[hour_key] = self.stats.hourly_pnl.get(hour_key, 0) + pnl
