@@ -43,10 +43,6 @@ class WindowState:
     signal_fired: bool = False                   # did we already trade this window?
     signal_side: str = ""                        # YES or NO
     position: Optional[Position] = None
-    # Spike confirmation: spike detected but waiting to confirm
-    pending_spike_time: float = 0.0              # when spike was first detected
-    pending_spike_dir: str = ""                  # "YES" or "NO"
-    pending_spike_price: float = 0.0             # BTC price when spike detected
 
 
 @dataclass
@@ -142,61 +138,29 @@ class Strategy:
             if time_left <= 20:
                 continue
 
-            # ── Spike detection with confirmation ──
-            # Step 1: Detect initial spike
-            if not ws.pending_spike_dir:
-                spike_delta = self.feed.detect_spike(cfg.spike_move_usd, cfg.spike_window_sec)
-                if spike_delta is not None:
-                    ws.pending_spike_dir = "YES" if spike_delta > 0 else "NO"
-                    ws.pending_spike_time = now
-                    ws.pending_spike_price = btc_price
-                    log.info(
-                        "SPIKE DETECTED: $%+.0f in %.0fs → %s | waiting %.0fs to confirm...",
-                        spike_delta, cfg.spike_window_sec,
-                        ws.pending_spike_dir, cfg.spike_confirm_sec,
-                    )
-                    self.stats.current_signal = f"CONFIRMING {ws.pending_spike_dir}..."
+            # ── Instant momentum detection (no delay) ──
+            # Checks $15 move in 2s with consistent direction (midpoint check)
+            spike_delta = self.feed.detect_momentum(cfg.spike_move_usd, cfg.spike_window_sec)
+            if spike_delta is not None:
+                side = "YES" if spike_delta > 0 else "NO"
+                ws.signal_fired = True
+                ws.signal_side = side
+                self.stats.total_signals += 1
+                self.stats.current_signal = f"{'UP' if side == 'YES' else 'DOWN'} ${spike_delta:+.0f}"
+                log.info(
+                    "MOMENTUM: $%+.0f in %.1fs → BUY %s | %s",
+                    spike_delta, cfg.spike_window_sec,
+                    side, ws.market.question[:50],
+                )
 
-            # Step 2: After confirm delay, check if BTC held the direction
-            elif not ws.signal_fired:
-                elapsed = now - ws.pending_spike_time
-                if elapsed >= cfg.spike_confirm_sec:
-                    # Did BTC hold the move?
-                    if ws.pending_spike_dir == "YES":
-                        held = btc_price >= ws.pending_spike_price
-                    else:
-                        held = btc_price <= ws.pending_spike_price
-
-                    if held:
-                        side = ws.pending_spike_dir
-                        ws.signal_fired = True
-                        ws.signal_side = side
-                        self.stats.total_signals += 1
-                        confirm_move = btc_price - ws.pending_spike_price
-                        self.stats.current_signal = f"CONFIRMED {side} ${confirm_move:+.0f}"
-                        log.info(
-                            "SPIKE CONFIRMED: %s held after %.1fs (BTC $%.2f → $%.2f, %+$.0f) | Buy on %s",
-                            side, elapsed, ws.pending_spike_price, btc_price,
-                            confirm_move, ws.market.question[:50],
-                        )
-
-                        # Execute the buy
-                        await self.poly.get_market_prices(ws.market)
-                        position = await self.poly.buy(ws.market, side, cfg.max_position_usdc)
-                        if position.filled:
-                            ws.position = position
-                            self._open_positions.append(position)
-                            self.stats.total_trades += 1
-                            self.stats.last_action = f"BUY {side} @ ${position.avg_entry:.4f}"
-                    else:
-                        # Reversed — fake-out, skip this window
-                        ws.pending_spike_dir = ""
-                        ws.pending_spike_time = 0
-                        log.info(
-                            "SPIKE REJECTED: BTC reversed after %.1fs ($%.2f → $%.2f) — fake-out",
-                            elapsed, ws.pending_spike_price, btc_price,
-                        )
-                        self.stats.current_signal = "REJECTED (fake-out)"
+                # Execute the buy IMMEDIATELY
+                await self.poly.get_market_prices(ws.market)
+                position = await self.poly.buy(ws.market, side, cfg.max_position_usdc)
+                if position.filled:
+                    ws.position = position
+                    self._open_positions.append(position)
+                    self.stats.total_trades += 1
+                    self.stats.last_action = f"BUY {side} @ ${position.avg_entry:.4f}"
 
         # ---- 3. Monitor open positions for exit ----
         await self._check_exits()

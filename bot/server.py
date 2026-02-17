@@ -155,7 +155,6 @@ class DashboardServer:
             "config": {
                 "spike_move_usd": cfg.spike_move_usd,
                 "spike_window_sec": cfg.spike_window_sec,
-                "spike_confirm_sec": cfg.spike_confirm_sec,
                 "profit_target": cfg.profit_target_pct,
                 "moonbag": cfg.moonbag_pct,
                 "drawdown_trigger": cfg.drawdown_trigger_pct,

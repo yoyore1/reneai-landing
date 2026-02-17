@@ -17,13 +17,10 @@ class Config:
     poly_api_passphrase: str = os.getenv("POLY_API_PASSPHRASE", "")
     poly_private_key: str = os.getenv("POLY_PRIVATE_KEY", "")
 
-    # Spike detection: $X move within Y seconds = real momentum
-    spike_move_usd: float = float(os.getenv("SPIKE_MOVE_USD", "20.0"))
-    spike_window_sec: float = float(os.getenv("SPIKE_WINDOW_SEC", "3.0"))
-
-    # Confirmation: wait this many seconds after spike, then check BTC
-    # still moved in the same direction. Filters out fake-outs.
-    spike_confirm_sec: float = float(os.getenv("SPIKE_CONFIRM_SEC", "1.5"))
+    # Spike detection: $X consistent move within Y seconds = real momentum
+    # Uses midpoint check (no delay) — price must move consistently, not V-shape
+    spike_move_usd: float = float(os.getenv("SPIKE_MOVE_USD", "15.0"))
+    spike_window_sec: float = float(os.getenv("SPIKE_WINDOW_SEC", "2.0"))
 
     # If gain hits 15%+, let it ride (moonbag) with dynamic trailing stop
     moonbag_pct: float = float(os.getenv("MOONBAG_PCT", "15.0"))

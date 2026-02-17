@@ -58,6 +58,42 @@ class BinanceFeed:
             return delta
         return None
 
+    def detect_momentum(self, move_usd: float, window_sec: float) -> Optional[float]:
+        """
+        Detect a momentum spike with instant confirmation (no delay).
+
+        Checks:
+          1. Price moved $move_usd+ over the last window_sec seconds
+          2. The midpoint price (halfway through the window) was BETWEEN
+             the start and end — meaning consistent direction, not a V-shape
+
+        Returns signed dollar move if momentum confirmed, None otherwise.
+        """
+        if self.current_price is None:
+            return None
+
+        price_start = self.get_price_n_seconds_ago(window_sec)
+        price_mid = self.get_price_n_seconds_ago(window_sec / 2.0)
+
+        if price_start is None or price_mid is None:
+            return None
+
+        delta = self.current_price - price_start
+        if abs(delta) < move_usd:
+            return None
+
+        # Check midpoint is between start and end (consistent direction)
+        if delta > 0:
+            # Up move: mid should be above start and below current
+            if price_mid > price_start and price_mid < self.current_price:
+                return delta
+        else:
+            # Down move: mid should be below start and above current
+            if price_mid < price_start and price_mid > self.current_price:
+                return delta
+
+        return None
+
     # ------------------------------------------------------------------
     # bootstrap: grab a REST snapshot so we have a price before WS fires
     # ------------------------------------------------------------------
