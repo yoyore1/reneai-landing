@@ -239,24 +239,38 @@ class Strategy2:
     # ------------------------------------------------------------------
 
     def _record_hourly_pnl(self, pnl: float):
-        hour_key = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:00")
+        hour_key = datetime.now(timezone.utc).strftime("%H:00")
         self.stats.hourly_pnl[hour_key] = self.stats.hourly_pnl.get(hour_key, 0) + pnl
 
     def _hourly_report(self):
-        hour_key = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:00")
+        now = datetime.now(timezone.utc)
+        hour_key = now.strftime("%H:00")
+        today = now.strftime("%Y-%m-%d")
+
+        # Reset at midnight (new day)
+        if not hasattr(self, "_last_day") or self._last_day != today:
+            if hasattr(self, "_last_day") and self._last_day:
+                log.info("═══ S2 NEW DAY — resetting hourly P&L ═══")
+            self.stats.hourly_pnl = {}
+            self._last_day = today
+
+        # Log report when a new hour starts
         if hour_key != self._last_hour_key and self._last_hour_key:
-            # New hour — report the last hour
             prev_pnl = self.stats.hourly_pnl.get(self._last_hour_key, 0)
             log.info(
-                "═══ S2 HOURLY REPORT [%s] ═══  PnL: $%+.2f  |  Total: $%+.2f  |  "
-                "Positions: %d  Sells: %d  W: %d  L: %d",
+                "═══ S2 HOURLY [%s] ═══  PnL: $%+.2f  |  Day total: $%+.2f  |  "
+                "Sells: %d  W: %d  L: %d",
                 self._last_hour_key, prev_pnl, self.stats.total_pnl,
-                self.stats.total_positions, self.stats.sells_filled,
-                self.stats.wins, self.stats.losses,
+                self.stats.sells_filled, self.stats.wins, self.stats.losses,
             )
             self.stats.last_hour_report = (
-                f"{self._last_hour_key}: ${prev_pnl:+.2f} (total ${self.stats.total_pnl:+.2f})"
+                f"{self._last_hour_key}: ${prev_pnl:+.2f} (day ${self.stats.total_pnl:+.2f})"
             )
+
+        # Make sure current hour exists in the dict even with $0
+        if hour_key not in self.stats.hourly_pnl:
+            self.stats.hourly_pnl[hour_key] = 0.0
+
         self._last_hour_key = hour_key
 
     @property

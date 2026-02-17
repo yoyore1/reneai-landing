@@ -109,6 +109,7 @@ class Strategy:
             return  # no price yet
 
         btc_price = self.feed.current_price
+        self._check_daily_reset()
 
         # ---- 1. Refresh active markets every ~30 s ----
         now = time.time()
@@ -275,5 +276,17 @@ class Strategy:
         self._open_positions = still_open
 
     def _record_hourly_pnl(self, pnl: float):
-        hour_key = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:00")
+        hour_key = datetime.now(timezone.utc).strftime("%H:00")
         self.stats.hourly_pnl[hour_key] = self.stats.hourly_pnl.get(hour_key, 0) + pnl
+
+    def _check_daily_reset(self):
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if not hasattr(self, "_last_day") or self._last_day != today:
+            if hasattr(self, "_last_day") and self._last_day:
+                log.info("═══ S1 NEW DAY — resetting hourly P&L ═══")
+            self.stats.hourly_pnl = {}
+            self._last_day = today
+        # Make sure current hour exists
+        hour_key = datetime.now(timezone.utc).strftime("%H:00")
+        if hour_key not in self.stats.hourly_pnl:
+            self.stats.hourly_pnl[hour_key] = 0.0

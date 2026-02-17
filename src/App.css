@@ -277,6 +277,7 @@ body {
 }
 .hourly-win { border-left:2px solid var(--green); }
 .hourly-loss { border-left:2px solid var(--red); }
+.hourly-flat { border-left:2px solid var(--dim2); }
 .hourly-time { display:block; font-size:0.5rem; color:var(--dim); font-weight:600; }
 .hourly-val { display:block; font-size:0.8rem; font-weight:800; font-variant-numeric:tabular-nums; }
 

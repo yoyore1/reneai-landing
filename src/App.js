@@ -246,12 +246,12 @@ function DashTab({ stats, windows, positions, priceHistory, config }) {
       {/* Hourly P&L */}
       {stats.hourly_pnl && Object.keys(stats.hourly_pnl).length > 0 && (
         <>
-          <h3 className="section-title">Hourly P&L</h3>
+          <h3 className="section-title">Hourly P&L (resets daily)</h3>
           <div className="hourly-grid">
-            {Object.entries(stats.hourly_pnl).reverse().map(([hour, pnl]) => (
-              <div key={hour} className={`hourly-card ${pnl >= 0 ? "hourly-win" : "hourly-loss"}`}>
-                <span className="hourly-time">{hour.split(" ")[1] || hour}</span>
-                <span className={`hourly-val ${pnl >= 0 ? "green" : "red"}`}>{fPnl(pnl)}</span>
+            {Object.entries(stats.hourly_pnl).sort(([a],[b]) => a.localeCompare(b)).map(([hour, pnl]) => (
+              <div key={hour} className={`hourly-card ${pnl > 0 ? "hourly-win" : pnl < 0 ? "hourly-loss" : "hourly-flat"}`}>
+                <span className="hourly-time">{hour}</span>
+                <span className={`hourly-val ${pnl > 0 ? "green" : pnl < 0 ? "red" : ""}`}>{fPnl(pnl)}</span>
               </div>
             ))}
           </div>
@@ -498,12 +498,12 @@ function S2DashTab({ s2 }) {
       {/* Hourly P&L */}
       {st.hourly_pnl && Object.keys(st.hourly_pnl).length > 0 && (
         <>
-          <h3 className="section-title">Hourly P&L</h3>
+          <h3 className="section-title">Hourly P&L (resets daily)</h3>
           <div className="hourly-grid">
-            {Object.entries(st.hourly_pnl).reverse().map(([hour, pnl]) => (
-              <div key={hour} className={`hourly-card ${pnl >= 0 ? "hourly-win" : "hourly-loss"}`}>
-                <span className="hourly-time">{hour.split(" ")[1] || hour}</span>
-                <span className={`hourly-val ${pnl >= 0 ? "green" : "red"}`}>{fPnl(pnl)}</span>
+            {Object.entries(st.hourly_pnl).sort(([a],[b]) => a.localeCompare(b)).map(([hour, pnl]) => (
+              <div key={hour} className={`hourly-card ${pnl > 0 ? "hourly-win" : pnl < 0 ? "hourly-loss" : "hourly-flat"}`}>
+                <span className="hourly-time">{hour}</span>
+                <span className={`hourly-val ${pnl > 0 ? "green" : pnl < 0 ? "red" : ""}`}>{fPnl(pnl)}</span>
               </div>
             ))}
           </div>
