@@ -312,21 +312,12 @@ async def sim_window(s: aiohttp.ClientSession, mkt: Mkt, num: int) -> Optional[P
 
             # ── Mode transitions ──
 
-            # Moonbag: if gain ever hits 20%+, let it ride with a 10% trailing stop
-            if not pos.moonbag_mode and not pos.protection_mode and gain >= MOONBAG_PCT:
+            # Moonbag: if gain ever hits 20%+, let it ride with dynamic trailing stop
+            if not pos.moonbag_mode and gain >= MOONBAG_PCT:
                 pos.moonbag_mode = True
                 print()
                 log(f"{B}{G}*** MOONBAG MODE: gain hit {gain:+.1f}%! Letting it ride ***{R}")
                 log(f"{G}  Dynamic trailing stop at half the peak (currently +{gain/2:.1f}%){R}")
-                print()
-
-            # Protection: if gain drops past -15%, switch to damage control
-            if not pos.protection_mode and gain <= DRAWDOWN_TRIGGER_PCT:
-                pos.protection_mode = True
-                pos.moonbag_mode = False  # override moonbag if somehow both
-                print()
-                log(f"{B}{RD}*** PROTECTION MODE: dropped to {gain:+.1f}% (trigger={DRAWDOWN_TRIGGER_PCT}%) ***{R}")
-                log(f"{Y}  Will sell when position recovers to {PROTECTION_EXIT_PCT}%{R}")
                 print()
 
             # Status label
@@ -334,25 +325,12 @@ async def sim_window(s: aiohttp.ClientSession, mkt: Mkt, num: int) -> Optional[P
             if pos.moonbag_mode:
                 trail_floor = pos.peak_gain / 2.0
                 mode_str = f" {G}[MOONBAG peak={pos.peak_gain:+.1f}% stop=+{trail_floor:.1f}%]{R}"
-            elif pos.protection_mode:
-                mode_str = f" {Y}[PROTECT worst={pos.worst_pnl:+.1f}%]{R}"
 
             log(f"  {pos.side} pos: entry=${pos.entry:.3f} bid={bid_s} {gc}P&L={gain:+.1f}%{R}{mode_str}  BTC={mv_c}{move:+.4f}%{R}  left={left:.0f}s")
 
             # ── Exit decisions ──
 
-            # HARD STOP — no exceptions
-            if gain <= HARD_STOP_PCT:
-                pos.exit_px = bid_px
-                pos.pnl = (bid_px - pos.entry) * pos.qty
-                pos.reason = f"HARD STOP {gain:+.1f}%"
-                print()
-                log(f"{B}{RD}*** HARD STOP SELL @ ${bid_px:.3f} | PnL: ${pos.pnl:+.2f} ({gain:+.1f}%) ***{R}")
-                log(f"  Emergency exit — hit {HARD_STOP_PCT}% floor")
-                print()
-                return pos
-
-            elif pos.moonbag_mode:
+            if pos.moonbag_mode:
                 # Dynamic trailing stop: floor = half the peak
                 trail_floor = pos.peak_gain / 2.0
                 if gain <= trail_floor:
@@ -365,21 +343,8 @@ async def sim_window(s: aiohttp.ClientSession, mkt: Mkt, num: int) -> Optional[P
                     print()
                     return pos
 
-            elif pos.protection_mode:
-                # Was below -15%, sell when recovers to -10%
-                if gain >= PROTECTION_EXIT_PCT:
-                    pos.exit_px = bid_px
-                    pos.pnl = (bid_px - pos.entry) * pos.qty
-                    pos.reason = f"PROTECTION EXIT {gain:+.1f}% (worst was {pos.worst_pnl:+.1f}%)"
-                    print()
-                    log(f"{B}{Y}*** PROTECTION SELL @ ${bid_px:.3f} | PnL: ${pos.pnl:+.2f} ({gain:+.1f}%) ***{R}")
-                    log(f"  Took small loss to avoid bigger one (worst was {pos.worst_pnl:+.1f}%)")
-                    print()
-                    return pos
-
-            else:
-                # Normal mode: between 10% and 20% → sell
-                if gain >= PROFIT_TARGET_PCT:
+            elif gain >= PROFIT_TARGET_PCT:
+                # Normal: sell at +5%
                     pos.exit_px = bid_px
                     pos.pnl = (bid_px - pos.entry) * pos.qty
                     pos.reason = f"PROFIT +{gain:.1f}%"
