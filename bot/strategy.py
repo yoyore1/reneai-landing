@@ -240,12 +240,14 @@ class Strategy:
                 )
 
             elif pos.moonbag_mode:
-                # Was above 20%, trailing stop: sell if drops back to 10%
-                if gain_pct <= cfg.profit_target_pct:
+                # Dynamic trailing stop: floor = half the peak gain
+                # Peak +20% → stop +10%, peak +30% → stop +15%, peak +50% → stop +25%
+                trailing_floor = pos.peak_gain / 2.0
+                if gain_pct <= trailing_floor:
                     should_sell = True
                     sell_reason = (
-                        f"MOONBAG STOP +{gain_pct:.1f}% "
-                        f"(peak +{pos.peak_gain:.1f}%)"
+                        f"MOONBAG TRAIL +{gain_pct:.1f}% "
+                        f"(peak +{pos.peak_gain:.1f}%, floor +{trailing_floor:.1f}%)"
                     )
             elif pos.protection_mode:
                 # Was below -15%, sell when recovers to -10%

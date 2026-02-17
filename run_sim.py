@@ -286,7 +286,7 @@ async def sim_window(s: aiohttp.ClientSession, mkt: Mkt, num: int) -> Optional[P
                 pos.moonbag_mode = True
                 print()
                 log(f"{B}{G}*** MOONBAG MODE: gain hit {gain:+.1f}%! Letting it ride ***{R}")
-                log(f"{G}  Trailing stop at +{PROFIT_TARGET_PCT}% (will sell if it drops back to +{PROFIT_TARGET_PCT}%){R}")
+                log(f"{G}  Dynamic trailing stop at half the peak (currently +{gain/2:.1f}%){R}")
                 print()
 
             # Protection: if gain drops past -15%, switch to damage control
@@ -301,7 +301,8 @@ async def sim_window(s: aiohttp.ClientSession, mkt: Mkt, num: int) -> Optional[P
             # Status label
             mode_str = ""
             if pos.moonbag_mode:
-                mode_str = f" {G}[MOONBAG peak={pos.peak_gain:+.1f}%]{R}"
+                trail_floor = pos.peak_gain / 2.0
+                mode_str = f" {G}[MOONBAG peak={pos.peak_gain:+.1f}% stop=+{trail_floor:.1f}%]{R}"
             elif pos.protection_mode:
                 mode_str = f" {Y}[PROTECT worst={pos.worst_pnl:+.1f}%]{R}"
 
@@ -321,14 +322,15 @@ async def sim_window(s: aiohttp.ClientSession, mkt: Mkt, num: int) -> Optional[P
                 return pos
 
             elif pos.moonbag_mode:
-                # Was above 20%, now trailing stop: sell if drops to 10%
-                if gain <= PROFIT_TARGET_PCT:
+                # Dynamic trailing stop: floor = half the peak
+                trail_floor = pos.peak_gain / 2.0
+                if gain <= trail_floor:
                     pos.exit_px = bid_px
                     pos.pnl = (bid_px - pos.entry) * pos.qty
-                    pos.reason = f"MOONBAG STOP +{gain:.1f}% (peak was +{pos.peak_gain:.1f}%)"
+                    pos.reason = f"MOONBAG TRAIL +{gain:.1f}% (peak +{pos.peak_gain:.1f}%, floor +{trail_floor:.1f}%)"
                     print()
                     log(f"{B}{G}*** TRAILING STOP SELL @ ${bid_px:.3f} | PnL: ${pos.pnl:+.2f} ({gain:+.1f}%) ***{R}")
-                    log(f"  Peak was +{pos.peak_gain:.1f}%, sold on pullback to +{gain:.1f}%")
+                    log(f"  Peak was +{pos.peak_gain:.1f}%, floor was +{trail_floor:.1f}%, sold at +{gain:.1f}%")
                     print()
                     return pos
 
