@@ -25,8 +25,8 @@ class Config:
     # still moved in the same direction. Filters out fake-outs.
     spike_confirm_sec: float = float(os.getenv("SPIKE_CONFIRM_SEC", "1.5"))
 
-    # If gain hits 20%+, let it ride (moonbag) with a trailing stop at 10%
-    moonbag_pct: float = float(os.getenv("MOONBAG_PCT", "20.0"))
+    # If gain hits 15%+, let it ride (moonbag) with dynamic trailing stop
+    moonbag_pct: float = float(os.getenv("MOONBAG_PCT", "15.0"))
 
     # Normal profit target: sell between 5-20%
     profit_target_pct: float = float(os.getenv("PROFIT_TARGET_PCT", "5.0"))

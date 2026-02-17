@@ -25,7 +25,7 @@ import aiohttp
 SPIKE_MOVE_USD       = 20.0     # BTC must move this many $ ...
 SPIKE_WINDOW_SEC     = 3.0      # ... within this many seconds
 SPIKE_CONFIRM_SEC    = 1.5      # wait this long, then check BTC held direction
-MOONBAG_PCT          = 20.0     # if gain hits this, let it ride
+MOONBAG_PCT          = 15.0     # if gain hits this, let it ride
 PROFIT_TARGET_PCT    = 5.0      # normal sell target / trailing stop floor
 DRAWDOWN_TRIGGER_PCT = -15.0    # enter protection mode if we drop this far
 PROTECTION_EXIT_PCT  = -10.0    # in protection mode, sell here to cut losses
