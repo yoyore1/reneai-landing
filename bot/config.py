@@ -36,13 +36,6 @@ class Config:
     # Maximum USDC to risk per 5-minute window
     max_position_usdc: float = float(os.getenv("MAX_POSITION_USDC", "50.0"))
 
-    # Max price to pay per share (skip if ask is above this -- alpha is gone)
-    max_entry_price: float = float(os.getenv("MAX_ENTRY_PRICE", "0.58"))
-
-    # How many cents below the ask to place your limit order (better fills)
-    # 0 = hit the ask (fast fill), 0.02 = 2 cents below (better price, slower fill)
-    limit_offset: float = float(os.getenv("LIMIT_OFFSET", "0.02"))
-
     # How often (seconds) to poll / check for spike + exit conditions
     poll_interval_sec: float = float(os.getenv("POLL_INTERVAL_SEC", "0.5"))
 
