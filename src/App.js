@@ -104,6 +104,7 @@ function App() {
   const [state, setState] = useState(null);
   const [connected, setConnected] = useState(false);
   const [tab, setTab] = useState("dash");
+  const [strat, setStrat] = useState("s1"); // "s1" or "s2"
   const wsRef = useRef(null);
 
   useEffect(() => {
@@ -129,7 +130,8 @@ function App() {
     );
   }
 
-  const { btc_price, btc_live, stats, windows, positions, closed, config, uptime, price_history, events } = state;
+  const { btc_price, btc_live, stats, windows, positions, closed, config, uptime, price_history, events, s2 } = state;
+  const activePnl = strat === "s1" ? stats.pnl : (s2?.stats?.pnl || 0);
 
   return (
     <div className="app">
@@ -139,24 +141,49 @@ function App() {
           <span className={`dot ${btc_live ? "dot-live" : "dot-dead"}`} />
           <span className="price-val">{fP(btc_price)}</span>
         </div>
-        <div className={`topbar-pnl ${stats.pnl >= 0 ? "green" : "red"}`}>{fPnl(stats.pnl)}</div>
+        <div className={`topbar-pnl ${activePnl >= 0 ? "green" : "red"}`}>{fPnl(activePnl)}</div>
         <div className="topbar-right">
           <span className="uptime-pill">{fUptime(uptime)}</span>
           <span className={`conn-pill ${connected ? "conn-on" : "conn-off"}`}>{connected ? "LIVE" : "OFF"}</span>
         </div>
       </header>
 
+      {/* ── Strategy Toggle ── */}
+      <div className="strat-toggle">
+        <button className={`strat-btn ${strat === "s1" ? "strat-active strat-s1" : ""}`} onClick={() => { setStrat("s1"); setTab("dash"); }}>
+          <span className="strat-name">S1: Momentum</span>
+          <span className={`strat-pnl ${stats.pnl >= 0 ? "green" : "red"}`}>{fPnl(stats.pnl)}</span>
+        </button>
+        <button className={`strat-btn ${strat === "s2" ? "strat-active strat-s2" : ""}`} onClick={() => { setStrat("s2"); setTab("dash"); }}>
+          <span className="strat-name">S2: Passive</span>
+          <span className={`strat-pnl ${(s2?.stats?.pnl || 0) >= 0 ? "green" : "red"}`}>{fPnl(s2?.stats?.pnl || 0)}</span>
+        </button>
+      </div>
+
       {/* ── Content ── */}
       <main className="content">
-        {tab === "dash" && <DashTab stats={stats} windows={windows} positions={positions} priceHistory={price_history} config={config} />}
-        {tab === "windows" && <WindowsTab windows={windows} />}
-        {tab === "history" && <HistoryTab closed={closed} stats={stats} />}
-        {tab === "settings" && <SettingsTab config={config} events={events} uptime={uptime} stats={stats} />}
+        {strat === "s1" ? (
+          <>
+            {tab === "dash" && <DashTab stats={stats} windows={windows} positions={positions} priceHistory={price_history} config={config} />}
+            {tab === "windows" && <WindowsTab windows={windows} />}
+            {tab === "history" && <HistoryTab closed={closed} stats={stats} />}
+            {tab === "settings" && <SettingsTab config={config} events={events} uptime={uptime} stats={stats} />}
+          </>
+        ) : (
+          <>
+            {tab === "dash" && <S2DashTab s2={s2} />}
+            {tab === "history" && <S2HistoryTab s2={s2} />}
+            {tab === "settings" && <SettingsTab config={config} events={events} uptime={uptime} stats={stats} />}
+          </>
+        )}
       </main>
 
       {/* ── Bottom Nav ── */}
       <nav className="bottomnav">
-        {[["dash", IC.dash, "Dashboard"], ["windows", IC.chart, "Windows"], ["history", IC.list, "History"], ["settings", IC.gear, "Settings"]].map(([id, icon, label]) => (
+        {(strat === "s1"
+          ? [["dash", IC.dash, "Dashboard"], ["windows", IC.chart, "Windows"], ["history", IC.list, "History"], ["settings", IC.gear, "Settings"]]
+          : [["dash", IC.dash, "Dashboard"], ["history", IC.list, "History"], ["settings", IC.gear, "Settings"]]
+        ).map(([id, icon, label]) => (
           <button key={id} className={`nav-btn ${tab === id ? "nav-active" : ""}`} onClick={() => setTab(id)}>
             {icon}<span>{label}</span>
           </button>
@@ -419,6 +446,100 @@ function MiniWindow({ w }) {
           </span>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ━━━━━━━━━━━━━━━━━━━ S2 DASHBOARD TAB ━━━━━━━━━━━━━━━━━━━ */
+function S2DashTab({ s2 }) {
+  if (!s2?.enabled) return <div className="tab-content"><div className="empty-card">Strategy 2 not running</div></div>;
+  const st = s2.stats;
+  const total = st.wins + st.losses;
+  return (
+    <div className="tab-content">
+      {/* Stats */}
+      <div className="stats-row">
+        <div className="sr-card"><span className="sr-big">{st.bought}</span><span className="sr-label">Bought</span></div>
+        <div className="sr-card"><span className="sr-big green">{st.sells_filled}</span><span className="sr-label">Sold @60c</span></div>
+        <div className="sr-card"><span className="sr-big green">{st.wins}</span><span className="sr-label">Wins</span></div>
+        <div className="sr-card"><span className="sr-big red">{st.losses}</span><span className="sr-label">Losses</span></div>
+      </div>
+
+      {/* P&L */}
+      <div className="pnl-hero">
+        <div className="pnl-main">
+          <span className="pnl-label">Strategy 2 P&L</span>
+          <span className={`pnl-value ${st.pnl >= 0 ? "green" : "red"}`}>{fPnl(st.pnl)}</span>
+        </div>
+        <div className="pnl-details">
+          <div className="pnl-detail"><span className="pd-label">Win Rate</span><span>{st.win_rate}%</span></div>
+          <div className="pnl-detail"><span className="pd-label">Bought</span><span>{st.bought}</span></div>
+          <div className="pnl-detail"><span className="pd-label">Sold</span><span className="green">{st.sells_filled}</span></div>
+          <div className="pnl-detail"><span className="pd-label">Total</span><span>{total}</span></div>
+        </div>
+        {st.last_action && <div className="pnl-action">{st.last_action}</div>}
+      </div>
+
+      {/* How it works */}
+      <div className="rules-card">
+        <div className="rule"><span className="rule-zone rule-profit">BUY</span><span className="rule-desc">Buy Up side of next 5 markets at $0.50-0.53</span></div>
+        <div className="rule"><span className="rule-zone rule-moon">SELL</span><span className="rule-desc">Limit sell at $0.60 — sit and wait</span></div>
+        <div className="rule"><span className="rule-zone rule-wait">HOLD</span><span className="rule-desc">If not filled, hold to resolution ($1 or $0)</span></div>
+      </div>
+
+      {/* Open positions */}
+      <h3 className="section-title">Open Positions <span className="title-count">{s2.positions?.length || 0}</span></h3>
+      {(!s2.positions || s2.positions.length === 0) ? (
+        <div className="empty-card">No open positions</div>
+      ) : s2.positions.map((p, i) => (
+        <div key={i} className="pos-card">
+          <div className="pos-top">
+            <span className="pos-side side-up">▲ {p.side}</span>
+            <span className="badge badge-s2">LIMIT @${p.sell_target}</span>
+            <span className="pos-age">{p.age}s</span>
+          </div>
+          <div className="pos-grid">
+            <div className="pg"><span className="pg-label">Entry</span><span className="pg-val">${p.entry?.toFixed(3)}</span></div>
+            <div className="pg"><span className="pg-label">Target</span><span className="pg-val green">${p.sell_target?.toFixed(2)}</span></div>
+            <div className="pg"><span className="pg-label">Qty</span><span className="pg-val">{p.qty?.toFixed(1)}</span></div>
+            <div className="pg"><span className="pg-label">Spent</span><span className="pg-val">${p.spent?.toFixed(2)}</span></div>
+          </div>
+          <div className="pos-mkt">{p.market}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ━━━━━━━━━━━━━━━━━━━ S2 HISTORY TAB ━━━━━━━━━━━━━━━━━━━ */
+function S2HistoryTab({ s2 }) {
+  if (!s2?.enabled) return <div className="tab-content"><div className="empty-card">Strategy 2 not running</div></div>;
+  const sorted = [...(s2.closed || [])].reverse();
+  return (
+    <div className="tab-content">
+      <h3 className="section-title">S2 Trade History <span className="title-count">{sorted.length}</span></h3>
+      {sorted.length === 0 ? (
+        <div className="empty-card">No trades yet</div>
+      ) : sorted.map((t, i) => {
+        const isWin = t.pnl >= 0;
+        return (
+          <div key={i} className={`hist-card ${isWin ? "hist-win" : "hist-loss"}`}>
+            <div className="hist-top">
+              <span className="hist-side green">▲ {t.side}</span>
+              <div className="hist-right">
+                <span className={`hist-pct ${isWin ? "green" : "red"}`}>{t.pnl_pct != null ? `${t.pnl_pct >= 0 ? "+" : ""}${t.pnl_pct}%` : ""}</span>
+                <span className={`hist-pnl ${isWin ? "green" : "red"}`}>{fPnl(t.pnl)}</span>
+              </div>
+            </div>
+            <div className="hist-nums">
+              <span>Entry ${t.entry?.toFixed(3)}</span>
+              <span>Exit ${t.exit?.toFixed(3)}</span>
+              <span>{t.status}</span>
+            </div>
+            <div className="hist-mkt">{t.market}</div>
+          </div>
+        );
+      })}
     </div>
   );
 }

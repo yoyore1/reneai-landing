@@ -135,6 +135,30 @@ body {
   font-weight:600; display:inline-block; width:100%;
 }
 
+/* ═══ STRATEGY TOGGLE ═══ */
+.strat-toggle {
+  display:flex; gap:0; background:var(--bg2); border-bottom:1px solid var(--border);
+}
+.strat-btn {
+  flex:1; display:flex; justify-content:space-between; align-items:center;
+  padding:0.5rem 0.75rem; border:none; background:none; color:var(--dim);
+  font-size:0.75rem; font-weight:600; cursor:pointer; transition:all .15s;
+  border-bottom:2px solid transparent;
+  -webkit-tap-highlight-color:transparent;
+}
+.strat-btn:active { opacity:0.7; }
+.strat-active { color:var(--text); border-bottom-color:var(--blue); background:rgba(59,130,246,0.05); }
+.strat-s1.strat-active { border-bottom-color:var(--purple); background:rgba(168,85,247,0.05); }
+.strat-s2.strat-active { border-bottom-color:var(--green); background:rgba(34,197,94,0.05); }
+.strat-name { font-weight:700; }
+.strat-pnl { font-size:0.8rem; font-weight:800; font-variant-numeric:tabular-nums; }
+
+.badge-s2 {
+  font-size:0.45rem; font-weight:800; padding:0.1rem 0.3rem; border-radius:4px;
+  background:var(--green-bg); color:var(--green); border:1px solid rgba(34,197,94,.2);
+  text-transform:uppercase; letter-spacing:0.04em;
+}
+
 /* ═══ P&L GAUGE ═══ */
 .gauge { margin:0.4rem 0 0.2rem; }
 .gauge-bg { position:relative; height:6px; background:var(--bg4); border-radius:3px; overflow:visible; }

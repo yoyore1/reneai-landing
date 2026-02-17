@@ -58,6 +58,10 @@ async def main(headless: bool = False):
     await poly.start()
     strat = Strategy(feed, poly)
 
+    # Strategy 2: passive limit orders
+    from bot.strategy2 import Strategy2
+    strat2 = Strategy2(poly)
+
     # --- Graceful shutdown ---
     shutdown_event = asyncio.Event()
 
@@ -65,6 +69,7 @@ async def main(headless: bool = False):
         log.info("Shutdown signal received")
         feed.stop()
         strat.stop()
+        strat2.stop()
         shutdown_event.set()
 
     loop = asyncio.get_running_loop()
@@ -77,12 +82,13 @@ async def main(headless: bool = False):
     # --- Build task list ---
     tasks = [
         asyncio.create_task(feed.run(), name="binance-feed"),
-        asyncio.create_task(strat.run(), name="strategy"),
+        asyncio.create_task(strat.run(), name="strategy-1"),
+        asyncio.create_task(strat2.run(), name="strategy-2"),
     ]
 
     # Web dashboard server (always runs)
     from bot.server import DashboardServer
-    server = DashboardServer(feed, strat)
+    server = DashboardServer(feed, strat, strat2)
     tasks.append(asyncio.create_task(server.run(), name="web-dashboard"))
     log.info("Web dashboard will be at http://localhost:8899")
 
