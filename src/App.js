@@ -326,6 +326,7 @@ function SettingsTab({ config, events, uptime, stats }) {
       <div className="config-card">
         <ConfigRow label="Mode" value={config.dry_run ? "DRY RUN (Paper)" : "LIVE TRADING"} cls={config.dry_run ? "yellow" : "red"} />
         <ConfigRow label="Spike Trigger" value={`$${config.spike_move_usd} in ${config.spike_window_sec}s`} sub="Must move this fast to signal" />
+        <ConfigRow label="Confirmation" value={`${config.spike_confirm_sec}s`} sub="Wait, then check BTC held direction" />
         <ConfigRow label="Poll Speed" value={`${config.poll_interval || 0.5}s`} sub="How fast we check for spikes" />
         <ConfigRow label="Profit Target" value={`+${config.profit_target}%`} cls="green" />
         <ConfigRow label="Moonbag Trigger" value={`+${config.moonbag}%`} sub={`Trail stop at +${config.profit_target}%`} cls="green" />

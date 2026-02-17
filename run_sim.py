@@ -24,6 +24,7 @@ import aiohttp
 # ───── config ─────
 SPIKE_MOVE_USD       = 20.0     # BTC must move this many $ ...
 SPIKE_WINDOW_SEC     = 3.0      # ... within this many seconds
+SPIKE_CONFIRM_SEC    = 2.0      # wait this long, then check BTC held direction
 MOONBAG_PCT          = 20.0     # if gain hits this, let it ride
 PROFIT_TARGET_PCT    = 10.0     # normal sell target / trailing stop floor
 DRAWDOWN_TRIGGER_PCT = -15.0    # enter protection mode if we drop this far
@@ -214,45 +215,75 @@ async def sim_window(s: aiohttp.ClientSession, mkt: Mkt, num: int) -> Optional[P
             spike_delta = None  # not big enough
 
         if pos is None:
-            # ── Waiting for signal ──
+            # ── Waiting for signal (with confirmation) ──
             spike_str = f"  3s-move=${spike_delta:+.0f}" if spike_delta else ""
-            log(f"BTC ${px:,.2f}  {mv_c}{move:+.4f}%{R}  left={left:.0f}s{spike_str}")
 
-            # Also check if the Polymarket book has tightened
-            if tick % 3 == 0:
-                up_a, up_a_s = await best_ask(s, mkt.up_tok)
-                dn_a, dn_a_s = await best_ask(s, mkt.down_tok)
-                log(f"  Poly asks: Up={up_a_s}  Down={dn_a_s}")
+            # Track pending spike for confirmation
+            if not hasattr(sim_window, '_pending'):
+                sim_window._pending = None  # (time, direction, price)
 
-            if spike_delta is not None and left > 20:
-                side = "Up" if spike_delta > 0 else "Down"
-                tok = mkt.up_tok if side == "Up" else mkt.down_tok
-                col = G if side == "Up" else RD
+            if sim_window._pending is None:
+                # Step 1: detect initial spike
+                log(f"BTC ${px:,.2f}  {mv_c}{move:+.4f}%{R}  left={left:.0f}s{spike_str}")
 
-                print()
-                log(f"{B}{col}*** SPIKE: ${spike_delta:+.0f} in {SPIKE_WINDOW_SEC}s → BUY {side.upper()} ***{R}")
+                if tick % 3 == 0:
+                    up_a, up_a_s = await best_ask(s, mkt.up_tok)
+                    dn_a, dn_a_s = await best_ask(s, mkt.down_tok)
+                    log(f"  Poly asks: Up={up_a_s}  Down={dn_a_s}")
 
-                # Get real ask
-                ask, ask_s = await best_ask(s, tok)
-                bk_s = await full_book_str(s, tok)
-                log(f"  {side} full book: {bk_s}")
+                if spike_delta is not None and left > 20:
+                    direction = "Up" if spike_delta > 0 else "Down"
+                    sim_window._pending = (now_t, direction, px)
+                    col = G if direction == "Up" else RD
+                    print()
+                    log(f"{B}{col}*** SPIKE DETECTED: ${spike_delta:+.0f} in {SPIKE_WINDOW_SEC}s → {direction.upper()} ***{R}")
+                    log(f"{Y}  Waiting {SPIKE_CONFIRM_SEC}s to confirm BTC holds...{R}")
+            else:
+                # Step 2: waiting for confirmation
+                pend_time, pend_dir, pend_px = sim_window._pending
+                elapsed = now_t - pend_time
+                log(f"BTC ${px:,.2f}  {mv_c}{move:+.4f}%{R}  left={left:.0f}s  {Y}[confirming {pend_dir} {elapsed:.1f}s/{SPIKE_CONFIRM_SEC}s]{R}")
 
-                if ask is None or ask > 0.90:
-                    modeled = 0.52 + (abs(spike_delta) / 100) * 0.5
-                    modeled = min(modeled, 0.65)
-                    log(f"{Y}  Book too wide (ask={ask_s}). Using modeled fill @ ${modeled:.3f}{R}")
-                    ask = modeled
+                if elapsed >= SPIKE_CONFIRM_SEC:
+                    # Check: did BTC hold the direction?
+                    if pend_dir == "Up":
+                        held = px >= pend_px
+                    else:
+                        held = px <= pend_px
 
-                qty = MAX_POSITION_USDC / ask
+                    if held and left > 20:
+                        side = pend_dir
+                        tok = mkt.up_tok if side == "Up" else mkt.down_tok
+                        col = G if side == "Up" else RD
+                        confirm_move = px - pend_px
 
-                pos = Pos(
-                    side=side, token=tok,
-                    entry=ask, qty=qty,
-                    spent=MAX_POSITION_USDC,
-                    t_entry=time.time(),
-                )
-                log(f"{B}SIMULATED BUY: {qty:.2f} {side} shares @ ${ask:.3f} (${MAX_POSITION_USDC:.2f}){R}")
-                print()
+                        print()
+                        log(f"{B}{col}*** CONFIRMED: {side.upper()} held after {elapsed:.1f}s (${confirm_move:+.1f}) → BUY ***{R}")
+
+                        ask, ask_s = await best_ask(s, tok)
+                        bk_s = await full_book_str(s, tok)
+                        log(f"  {side} full book: {bk_s}")
+
+                        if ask is None or ask > 0.90:
+                            modeled = 0.52 + (abs(spike_delta or 20) / 100) * 0.5
+                            modeled = min(modeled, 0.65)
+                            log(f"{Y}  Book too wide (ask={ask_s}). Using modeled fill @ ${modeled:.3f}{R}")
+                            ask = modeled
+
+                        qty = MAX_POSITION_USDC / ask
+                        pos = Pos(
+                            side=side, token=tok,
+                            entry=ask, qty=qty,
+                            spent=MAX_POSITION_USDC,
+                            t_entry=time.time(),
+                        )
+                        log(f"{B}SIMULATED BUY: {qty:.2f} {side} shares @ ${ask:.3f} (${MAX_POSITION_USDC:.2f}){R}")
+                        print()
+                    else:
+                        log(f"{RD}*** FAKE-OUT: BTC reversed after {elapsed:.1f}s — skipping ***{R}")
+                        print()
+
+                    sim_window._pending = None
 
         else:
             # ── Have position, watch for exit ──
