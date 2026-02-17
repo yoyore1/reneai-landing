@@ -23,7 +23,7 @@ class Config:
 
     # Confirmation: wait this many seconds after spike, then check BTC
     # still moved in the same direction. Filters out fake-outs.
-    spike_confirm_sec: float = float(os.getenv("SPIKE_CONFIRM_SEC", "2.0"))
+    spike_confirm_sec: float = float(os.getenv("SPIKE_CONFIRM_SEC", "1.5"))
 
     # If gain hits 20%+, let it ride (moonbag) with a trailing stop at 10%
     moonbag_pct: float = float(os.getenv("MOONBAG_PCT", "20.0"))
