@@ -306,8 +306,17 @@ async def sim_window(s: aiohttp.ClientSession, mkt: Mkt, num: int) -> Optional[P
 
             # ── Exit decisions ──
 
-            if pos.moonbag_mode:
-                # Dynamic trailing stop: floor = half the peak
+            # Hard cap: 20% = sell no matter what
+            if gain >= 20.0:
+                pos.exit_px = bid_px
+                pos.pnl = (bid_px - pos.entry) * pos.qty
+                pos.reason = f"HARD CAP +{gain:.1f}%"
+                print()
+                log(f"{B}{G}*** HARD CAP SELL @ ${bid_px:.3f} | PnL: ${pos.pnl:+.2f} ({gain:+.1f}%) ***{R}")
+                print()
+                return pos
+
+            elif pos.moonbag_mode:
                 trail_floor = pos.peak_gain / 2.0
                 if gain <= trail_floor:
                     pos.exit_px = bid_px

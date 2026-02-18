@@ -221,7 +221,11 @@ class Strategy:
             should_sell = False
             sell_reason = ""
 
-            if pos.moonbag_mode:
+            # Hard cap: if gain hits 20%, sell no matter what
+            if gain_pct >= 20.0:
+                should_sell = True
+                sell_reason = f"HARD CAP +{gain_pct:.1f}%"
+            elif pos.moonbag_mode:
                 # Dynamic trailing stop: floor = half the peak gain
                 trailing_floor = pos.peak_gain / 2.0
                 if gain_pct <= trailing_floor:

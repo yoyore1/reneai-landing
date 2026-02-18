@@ -28,8 +28,8 @@ log = logging.getLogger("strategy3")
 
 BUY_THRESHOLD = 0.70       # side must be 70c+ at the 1:30 mark
 SKIP_THRESHOLD = 0.65      # if BOTH sides hit this during analysis window, skip
-ANALYSIS_START = 165.0      # start tracking at 2:45 remaining (= 300 - 135)
-ANALYSIS_END = 90.0         # trigger buy decision at 1:30 remaining
+ANALYSIS_START = 180.0      # start tracking at 3:00 remaining
+ANALYSIS_END = 120.0        # trigger buy decision at 2:00 remaining
 USDC_PER_TRADE = 50.0
 
 

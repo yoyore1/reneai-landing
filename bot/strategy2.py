@@ -24,7 +24,7 @@ log = logging.getLogger("strategy2")
 
 BUY_MIN = 0.50
 BUY_MAX = 0.51          # tight range — only buy at 50-51c
-SELL_TARGET = 0.60
+SELL_TARGET = 0.55
 MAX_MARKETS = 5          # buy into the next 5 upcoming markets
 USDC_PER_SIDE = 25.0     # $25 per side = $50 total per market
 
