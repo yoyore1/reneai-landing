@@ -104,7 +104,7 @@ function App() {
   const [state, setState] = useState(null);
   const [connected, setConnected] = useState(false);
   const [tab, setTab] = useState("dash");
-  const [strat, setStrat] = useState("s1"); // "s1" or "s2"
+  const [strat, setStrat] = useState("s1"); // "s1", "s2", or "s3"
   const wsRef = useRef(null);
 
   useEffect(() => {
@@ -130,8 +130,8 @@ function App() {
     );
   }
 
-  const { btc_price, btc_live, stats, windows, positions, closed, config, uptime, price_history, events, s2 } = state;
-  const activePnl = strat === "s1" ? stats.pnl : (s2?.stats?.pnl || 0);
+  const { btc_price, btc_live, stats, windows, positions, closed, config, uptime, price_history, events, s2, s3 } = state;
+  const activePnl = strat === "s1" ? stats.pnl : strat === "s2" ? (s2?.stats?.pnl || 0) : (s3?.stats?.pnl || 0);
 
   return (
     <div className="app">
@@ -158,24 +158,30 @@ function App() {
           <span className="strat-name">S2: Passive</span>
           <span className={`strat-pnl ${(s2?.stats?.pnl || 0) >= 0 ? "green" : "red"}`}>{fPnl(s2?.stats?.pnl || 0)}</span>
         </button>
+        <button className={`strat-btn ${strat === "s3" ? "strat-active strat-s3" : ""}`} onClick={() => { setStrat("s3"); setTab("dash"); }}>
+          <span className="strat-name">S3: Late</span>
+          <span className={`strat-pnl ${(s3?.stats?.pnl || 0) >= 0 ? "green" : "red"}`}>{fPnl(s3?.stats?.pnl || 0)}</span>
+        </button>
       </div>
 
       {/* ── Content ── */}
       <main className="content">
-        {strat === "s1" ? (
-          <>
-            {tab === "dash" && <DashTab stats={stats} windows={windows} positions={positions} priceHistory={price_history} config={config} />}
-            {tab === "windows" && <WindowsTab windows={windows} />}
-            {tab === "history" && <HistoryTab closed={closed} stats={stats} />}
-            {tab === "settings" && <SettingsTab config={config} events={events} uptime={uptime} stats={stats} />}
-          </>
-        ) : (
-          <>
-            {tab === "dash" && <S2DashTab s2={s2} />}
-            {tab === "history" && <S2HistoryTab s2={s2} />}
-            {tab === "settings" && <SettingsTab config={config} events={events} uptime={uptime} stats={stats} />}
-          </>
-        )}
+        {strat === "s1" && <>
+          {tab === "dash" && <DashTab stats={stats} windows={windows} positions={positions} priceHistory={price_history} config={config} />}
+          {tab === "windows" && <WindowsTab windows={windows} />}
+          {tab === "history" && <HistoryTab closed={closed} stats={stats} />}
+          {tab === "settings" && <SettingsTab config={config} events={events} uptime={uptime} stats={stats} />}
+        </>}
+        {strat === "s2" && <>
+          {tab === "dash" && <S2DashTab s2={s2} />}
+          {tab === "history" && <S2HistoryTab s2={s2} />}
+          {tab === "settings" && <SettingsTab config={config} events={events} uptime={uptime} stats={stats} />}
+        </>}
+        {strat === "s3" && <>
+          {tab === "dash" && <S3DashTab s3={s3} />}
+          {tab === "history" && <S3HistoryTab s3={s3} />}
+          {tab === "settings" && <SettingsTab config={config} events={events} uptime={uptime} stats={stats} />}
+        </>}
       </main>
 
       {/* ── Bottom Nav ── */}
@@ -461,6 +467,107 @@ function MiniWindow({ w }) {
           </span>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ━━━━━━━━━━━━━━━━━━━ S3 DASHBOARD TAB ━━━━━━━━━━━━━━━━━━━ */
+function S3DashTab({ s3 }) {
+  if (!s3?.enabled) return <div className="tab-content"><div className="empty-card">Strategy 3 not running</div></div>;
+  const st = s3.stats;
+  return (
+    <div className="tab-content">
+      <div className="stats-row">
+        <div className="sr-card"><span className="sr-big">{st.analyzed}</span><span className="sr-label">Analyzed</span></div>
+        <div className="sr-card"><span className="sr-big">{st.trades}</span><span className="sr-label">Trades</span></div>
+        <div className="sr-card"><span className="sr-big green">{st.wins}</span><span className="sr-label">Wins</span></div>
+        <div className="sr-card"><span className="sr-big red">{st.losses}</span><span className="sr-label">Losses</span></div>
+      </div>
+
+      <div className="pnl-hero">
+        <div className="pnl-main">
+          <span className="pnl-label">Strategy 3 P&L</span>
+          <span className={`pnl-value ${st.pnl >= 0 ? "green" : "red"}`}>{fPnl(st.pnl)}</span>
+        </div>
+        <div className="pnl-details">
+          <div className="pnl-detail"><span className="pd-label">Win Rate</span><span>{st.win_rate}%</span></div>
+          <div className="pnl-detail"><span className="pd-label">Skipped Choppy</span><span className="yellow">{st.skipped_choppy}</span></div>
+          <div className="pnl-detail"><span className="pd-label">No Leader</span><span>{st.skipped_no_leader}</span></div>
+          <div className="pnl-detail"><span className="pd-label">Trades</span><span>{st.trades}</span></div>
+        </div>
+        {st.last_action && <div className="pnl-action">{st.last_action}</div>}
+      </div>
+
+      {st.hourly_pnl && Object.keys(st.hourly_pnl).length > 0 && (
+        <>
+          <h3 className="section-title">Hourly P&L (resets daily)</h3>
+          <div className="hourly-grid">
+            {Object.entries(st.hourly_pnl).sort(([a],[b]) => a.localeCompare(b)).map(([hour, pnl]) => (
+              <div key={hour} className={`hourly-card ${pnl > 0 ? "hourly-win" : pnl < 0 ? "hourly-loss" : "hourly-flat"}`}>
+                <span className="hourly-time">{hour}</span>
+                <span className={`hourly-val ${pnl > 0 ? "green" : pnl < 0 ? "red" : ""}`}>{fPnl(pnl)}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      <div className="rules-card">
+        <div className="rule"><span className="rule-zone rule-wait">2:45→1:30</span><span className="rule-desc">Track highest Up & Down prices</span></div>
+        <div className="rule"><span className="rule-zone rule-danger">SKIP</span><span className="rule-desc">Both sides hit $0.65+ → choppy, no trade</span></div>
+        <div className="rule"><span className="rule-zone rule-profit">1:30 LEFT</span><span className="rule-desc">Buy whichever side is $0.70+ → hold to resolution</span></div>
+      </div>
+
+      <h3 className="section-title">Open Positions <span className="title-count">{s3.positions?.length || 0}</span></h3>
+      {(!s3.positions || s3.positions.length === 0) ? (
+        <div className="empty-card">No open positions</div>
+      ) : s3.positions.map((p, i) => (
+        <div key={i} className="pos-card">
+          <div className="pos-top">
+            <span className={`pos-side ${p.side === "Up" ? "side-up" : "side-down"}`}>{p.side === "Up" ? "▲" : "▼"} {p.side}</span>
+            <span className="badge badge-s3">HOLD→RESOLVE</span>
+            <span className="pos-age">{p.age}s</span>
+          </div>
+          <div className="pos-grid">
+            <div className="pg"><span className="pg-label">Entry</span><span className="pg-val">${p.entry?.toFixed(3)}</span></div>
+            <div className="pg"><span className="pg-label">Qty</span><span className="pg-val">{p.qty?.toFixed(1)}</span></div>
+            <div className="pg"><span className="pg-label">Spent</span><span className="pg-val">${p.spent?.toFixed(2)}</span></div>
+            <div className="pg"><span className="pg-label">Target</span><span className="pg-val green">$1.00</span></div>
+          </div>
+          <div className="pos-mkt">{p.market}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function S3HistoryTab({ s3 }) {
+  if (!s3?.enabled) return <div className="tab-content"><div className="empty-card">Strategy 3 not running</div></div>;
+  const sorted = [...(s3.closed || [])].reverse();
+  return (
+    <div className="tab-content">
+      <h3 className="section-title">S3 Trade History <span className="title-count">{sorted.length}</span></h3>
+      {sorted.length === 0 ? (
+        <div className="empty-card">No trades yet</div>
+      ) : sorted.map((t, i) => {
+        const isWin = t.pnl >= 0;
+        return (
+          <div key={i} className={`hist-card ${isWin ? "hist-win" : "hist-loss"}`}>
+            <div className="hist-top">
+              <span className={`hist-side ${t.side === "Up" ? "green" : "red"}`}>{t.side === "Up" ? "▲" : "▼"} {t.side}</span>
+              <div className="hist-right">
+                <span className={`hist-pnl ${isWin ? "green" : "red"}`}>{fPnl(t.pnl)}</span>
+              </div>
+            </div>
+            <div className="hist-nums">
+              <span>Entry ${t.entry?.toFixed(3)}</span>
+              <span>Exit ${t.exit?.toFixed(3)}</span>
+              <span>{t.status}</span>
+            </div>
+            <div className="hist-mkt">{t.market}</div>
+          </div>
+        );
+      })}
     </div>
   );
 }

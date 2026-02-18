@@ -28,10 +28,11 @@ MAX_LOG_ENTRIES = 50
 
 class DashboardServer:
 
-    def __init__(self, feed, strategy, strategy2=None, host="0.0.0.0", port=8899):
+    def __init__(self, feed, strategy, strategy2=None, strategy3=None, host="0.0.0.0", port=8899):
         self._feed = feed
         self._strat = strategy
         self._strat2 = strategy2
+        self._strat3 = strategy3
         self._host = host
         self._port = port
         self._clients: Set[web.WebSocketResponse] = set()
@@ -184,6 +185,7 @@ class DashboardServer:
             "closed": closed,
             "events": list(self._event_log),
             "s2": self._build_s2_state(),
+            "s3": self._build_s3_state(),
         }
 
     def _build_s2_state(self) -> dict:
@@ -240,6 +242,49 @@ class DashboardServer:
         }
 
     # ── handlers ──
+
+    def _build_s3_state(self) -> dict:
+        if not self._strat3:
+            return {"enabled": False}
+
+        s3 = self._strat3
+        st = s3.stats
+
+        positions = []
+        for p in s3.open_positions:
+            positions.append({
+                "side": p.side, "entry": p.entry_price, "qty": p.qty,
+                "spent": p.spent, "age": round(time.time() - p.entry_time),
+                "market": p.market.question, "status": p.status,
+            })
+
+        closed = []
+        for p in s3.closed_positions[-20:]:
+            closed.append({
+                "side": p.side, "entry": p.entry_price, "exit": p.exit_price,
+                "qty": p.qty, "spent": p.spent,
+                "pnl": round(p.pnl, 2) if p.pnl is not None else None,
+                "pnl_pct": round(((p.exit_price - p.entry_price) / p.entry_price) * 100, 1) if p.exit_price and p.entry_price else None,
+                "market": p.market.question, "status": p.status,
+            })
+
+        total = st.wins + st.losses
+        return {
+            "enabled": True,
+            "stats": {
+                "analyzed": st.markets_analyzed,
+                "trades": st.trades,
+                "skipped_choppy": st.skipped_choppy,
+                "skipped_no_leader": st.skipped_no_leader,
+                "wins": st.wins, "losses": st.losses,
+                "pnl": round(st.total_pnl, 2),
+                "win_rate": round((st.wins / total) * 100, 1) if total > 0 else 0,
+                "last_action": st.last_action,
+                "hourly_pnl": dict(st.hourly_pnl),
+            },
+            "positions": positions,
+            "closed": closed,
+        }
 
     async def _spa_handler(self, request):
         req_path = request.match_info.get("path", "")
