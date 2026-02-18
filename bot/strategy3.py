@@ -27,7 +27,7 @@ from bot.polymarket import PolymarketClient, Market
 log = logging.getLogger("strategy3")
 
 BUY_THRESHOLD = 0.70       # side must be 70c+ at the 2:00 mark
-BUY_MAX = 0.95             # don't buy above this — wait for it to drop below
+BUY_MAX = 0.90             # don't buy above this — wait for it to drop below
 SELL_TARGET = 0.96         # sell at 96c instead of holding to resolution
 SKIP_THRESHOLD = 0.65      # if BOTH sides hit this during analysis window, skip
 ANALYSIS_START = 180.0      # start tracking at 3:00 remaining
