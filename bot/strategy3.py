@@ -26,7 +26,9 @@ from bot.polymarket import PolymarketClient, Market
 
 log = logging.getLogger("strategy3")
 
-BUY_THRESHOLD = 0.70       # side must be 70c+ at the 1:30 mark
+BUY_THRESHOLD = 0.70       # side must be 70c+ at the 2:00 mark
+BUY_MAX = 0.95             # don't buy above this — wait for it to drop below
+SELL_TARGET = 0.96         # sell at 96c instead of holding to resolution
 SKIP_THRESHOLD = 0.65      # if BOTH sides hit this during analysis window, skip
 ANALYSIS_START = 180.0      # start tracking at 3:00 remaining
 ANALYSIS_END = 120.0        # trigger buy decision at 2:00 remaining
@@ -178,22 +180,31 @@ class Strategy3:
                 buy_price = 0
                 buy_token = ""
 
-                if up_now >= BUY_THRESHOLD and up_now >= down_now:
+                if up_now >= BUY_THRESHOLD and up_now <= BUY_MAX and up_now >= down_now:
                     buy_side = "Up"
                     buy_price = up_now
                     buy_token = mkt.yes_token_id
-                elif down_now >= BUY_THRESHOLD and down_now >= up_now:
+                elif down_now >= BUY_THRESHOLD and down_now <= BUY_MAX and down_now >= up_now:
                     buy_side = "Down"
                     buy_price = down_now
                     buy_token = mkt.no_token_id
 
                 if buy_side is None:
-                    self.stats.skipped_no_leader += 1
-                    self.stats.last_action = f"SKIP NO LEADER (Up={up_now:.2f} Down={down_now:.2f})"
-                    log.info(
-                        "S3 SKIP: No side at $%.2f+ (Up=%.3f Down=%.3f)",
-                        BUY_THRESHOLD, up_now, down_now,
-                    )
+                    # Check if skipped because too high (>95c)
+                    if (up_now > BUY_MAX and up_now >= BUY_THRESHOLD) or (down_now > BUY_MAX and down_now >= BUY_THRESHOLD):
+                        self.stats.skipped_no_leader += 1
+                        self.stats.last_action = f"SKIP TOO HIGH (Up={up_now:.2f} Down={down_now:.2f}) > ${BUY_MAX}"
+                        log.info(
+                            "S3 SKIP: Price > $%.2f (Up=%.3f Down=%.3f) — waiting for dip",
+                            BUY_MAX, up_now, down_now,
+                        )
+                    else:
+                        self.stats.skipped_no_leader += 1
+                        self.stats.last_action = f"SKIP NO LEADER (Up={up_now:.2f} Down={down_now:.2f})"
+                        log.info(
+                            "S3 SKIP: No side at $%.2f+ (Up=%.3f Down=%.3f)",
+                            BUY_THRESHOLD, up_now, down_now,
+                        )
                     continue
 
                 # BUY
@@ -238,11 +249,30 @@ class Strategy3:
         for pos in self._positions:
             if pos.status != "open":
                 continue
-            if not pos.market.window_end or now <= pos.market.window_end:
+
+            bid = await self.poly._get_best_bid(pos.token_id)
+            window_ended = pos.market.window_end and now > pos.market.window_end
+
+            # Sell at 96c if we can
+            if bid and bid >= SELL_TARGET and not window_ended:
+                pos.exit_price = SELL_TARGET
+                pos.pnl = (SELL_TARGET - pos.entry_price) * pos.qty
+                pos.status = "sold"
+                self.stats.wins += 1
+                self.stats.total_pnl += pos.pnl
+                self._record_hourly_pnl(pos.pnl)
+                self.stats.last_action = f"SELL {pos.side} @ ${SELL_TARGET} +${pos.pnl:.2f}"
+                self._closed.append(pos)
+                log.info(
+                    "[S3] SELL %s @ $%.2f | PnL: +$%.2f | %s",
+                    pos.side, SELL_TARGET, pos.pnl, pos.market.question[:45],
+                )
+                continue
+
+            if not window_ended:
                 continue
 
             # Window ended — resolve
-            bid = await self.poly._get_best_bid(pos.token_id)
             if bid and bid > 0.5:
                 pos.exit_price = 1.0
                 pos.pnl = (1.0 - pos.entry_price) * pos.qty
