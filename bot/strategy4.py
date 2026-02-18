@@ -173,6 +173,28 @@ class Strategy4:
             now = time.time()
             ended = pos.market.window_end and now > pos.market.window_end
 
+            # Trend reversal: BTC crossed to wrong side of window open
+            btc_now = self.feed.current_price
+            ws = self._windows.get(pos.market.condition_id)
+            if btc_now and ws and ws.open_price:
+                wrong_side = (
+                    (pos.side == "YES" and btc_now < ws.open_price) or
+                    (pos.side == "NO" and btc_now > ws.open_price)
+                )
+                if wrong_side:
+                    log.warning("S4 REVERSAL: %s but BTC flipped → selling", pos.side)
+                    sold = await self.poly.sell(pos)
+                    if sold:
+                        self.stats.total_exits += 1
+                        self.stats.total_pnl += pos.pnl or 0
+                        self._record_hourly(pos.pnl or 0)
+                        self.stats.losses += 1
+                        self.stats.last_action = f"REVERSAL {pos.side}"
+                        self._closed_positions.append(pos)
+                    else:
+                        still_open.append(pos)
+                    continue
+
             if gain > pos.peak_gain:
                 pos.peak_gain = gain
 
