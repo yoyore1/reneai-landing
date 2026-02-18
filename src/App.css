@@ -151,6 +151,7 @@ body {
 .strat-s1.strat-active { border-bottom-color:var(--purple); background:rgba(168,85,247,0.05); }
 .strat-s2.strat-active { border-bottom-color:var(--green); background:rgba(34,197,94,0.05); }
 .strat-s3.strat-active { border-bottom-color:var(--yellow); background:rgba(234,179,8,0.05); }
+.strat-s4.strat-active { border-bottom-color:#f97316; background:rgba(249,115,22,0.05); }
 .strat-name { font-weight:700; }
 .strat-pnl { font-size:0.8rem; font-weight:800; font-variant-numeric:tabular-nums; }
 

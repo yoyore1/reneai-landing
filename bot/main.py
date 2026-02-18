@@ -66,6 +66,10 @@ async def main(headless: bool = False):
     from bot.strategy3 import Strategy3
     strat3 = Strategy3(poly)
 
+    # Strategy 4: momentum v2 — $25/3s (stricter than S1's $15/2s)
+    from bot.strategy4 import Strategy4
+    strat4 = Strategy4(feed, poly)
+
     # --- Graceful shutdown ---
     shutdown_event = asyncio.Event()
 
@@ -75,6 +79,7 @@ async def main(headless: bool = False):
         strat.stop()
         strat2.stop()
         strat3.stop()
+        strat4.stop()
         shutdown_event.set()
 
     loop = asyncio.get_running_loop()
@@ -90,11 +95,12 @@ async def main(headless: bool = False):
         asyncio.create_task(strat.run(), name="strategy-1"),
         asyncio.create_task(strat2.run(), name="strategy-2"),
         asyncio.create_task(strat3.run(), name="strategy-3"),
+        asyncio.create_task(strat4.run(), name="strategy-4"),
     ]
 
     # Web dashboard server (always runs)
     from bot.server import DashboardServer
-    server = DashboardServer(feed, strat, strat2, strat3)
+    server = DashboardServer(feed, strat, strat2, strat3, strat4)
     tasks.append(asyncio.create_task(server.run(), name="web-dashboard"))
     log.info("Web dashboard will be at http://localhost:8899")
 

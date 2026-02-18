@@ -28,11 +28,12 @@ MAX_LOG_ENTRIES = 50
 
 class DashboardServer:
 
-    def __init__(self, feed, strategy, strategy2=None, strategy3=None, host="0.0.0.0", port=8899):
+    def __init__(self, feed, strategy, strategy2=None, strategy3=None, strategy4=None, host="0.0.0.0", port=8899):
         self._feed = feed
         self._strat = strategy
         self._strat2 = strategy2
         self._strat3 = strategy3
+        self._strat4 = strategy4
         self._host = host
         self._port = port
         self._clients: Set[web.WebSocketResponse] = set()
@@ -186,6 +187,7 @@ class DashboardServer:
             "events": list(self._event_log),
             "s2": self._build_s2_state(),
             "s3": self._build_s3_state(),
+            "s4": self._build_s4_state(),
         }
 
     def _build_s2_state(self) -> dict:
@@ -284,6 +286,43 @@ class DashboardServer:
             },
             "positions": positions,
             "closed": closed,
+        }
+
+    def _build_s4_state(self) -> dict:
+        if not self._strat4:
+            return {"enabled": False}
+        s4 = self._strat4
+        st = s4.stats
+        positions = []
+        for p in s4.open_positions:
+            positions.append({
+                "side": p.side, "entry": p.avg_entry, "qty": p.qty,
+                "age": round(time.time() - p.entry_time),
+                "peak_gain": round(p.peak_gain, 2),
+                "moonbag_mode": p.moonbag_mode,
+                "market": p.market.question,
+            })
+        closed = []
+        for p in s4.closed_positions[-20:]:
+            closed.append({
+                "side": p.side, "entry": p.avg_entry, "exit": p.exit_price,
+                "qty": p.qty, "pnl": round(p.pnl, 2) if p.pnl is not None else None,
+                "pnl_pct": round(((p.exit_price - p.avg_entry) / p.avg_entry) * 100, 1) if p.exit_price and p.avg_entry else None,
+                "market": p.market.question,
+            })
+        total = st.wins + st.losses
+        return {
+            "enabled": True,
+            "stats": {
+                "signals": st.total_signals, "trades": st.total_trades,
+                "exits": st.total_exits, "rejected": st.rejected,
+                "wins": st.wins, "losses": st.losses,
+                "pnl": round(st.total_pnl, 2),
+                "win_rate": round((st.wins / total) * 100, 1) if total > 0 else 0,
+                "last_action": st.last_action,
+                "hourly_pnl": dict(st.hourly_pnl),
+            },
+            "positions": positions, "closed": closed,
         }
 
     async def _spa_handler(self, request):

@@ -130,8 +130,8 @@ function App() {
     );
   }
 
-  const { btc_price, btc_live, stats, windows, positions, closed, config, uptime, price_history, events, s2, s3 } = state;
-  const activePnl = strat === "s1" ? stats.pnl : strat === "s2" ? (s2?.stats?.pnl || 0) : (s3?.stats?.pnl || 0);
+  const { btc_price, btc_live, stats, windows, positions, closed, config, uptime, price_history, events, s2, s3, s4 } = state;
+  const activePnl = strat === "s1" ? stats.pnl : strat === "s2" ? (s2?.stats?.pnl || 0) : strat === "s3" ? (s3?.stats?.pnl || 0) : (s4?.stats?.pnl || 0);
 
   return (
     <div className="app">
@@ -162,6 +162,10 @@ function App() {
           <span className="strat-name">S3: Late</span>
           <span className={`strat-pnl ${(s3?.stats?.pnl || 0) >= 0 ? "green" : "red"}`}>{fPnl(s3?.stats?.pnl || 0)}</span>
         </button>
+        <button className={`strat-btn ${strat === "s4" ? "strat-active strat-s4" : ""}`} onClick={() => { setStrat("s4"); setTab("dash"); }}>
+          <span className="strat-name">S4: $25/3s</span>
+          <span className={`strat-pnl ${(s4?.stats?.pnl || 0) >= 0 ? "green" : "red"}`}>{fPnl(s4?.stats?.pnl || 0)}</span>
+        </button>
       </div>
 
       {/* ── Content ── */}
@@ -180,6 +184,11 @@ function App() {
         {strat === "s3" && <>
           {tab === "dash" && <S3DashTab s3={s3} />}
           {tab === "history" && <S3HistoryTab s3={s3} />}
+          {tab === "settings" && <SettingsTab config={config} events={events} uptime={uptime} stats={stats} />}
+        </>}
+        {strat === "s4" && <>
+          {tab === "dash" && <S4DashTab s4={s4} />}
+          {tab === "history" && <S4HistoryTab s4={s4} />}
           {tab === "settings" && <SettingsTab config={config} events={events} uptime={uptime} stats={stats} />}
         </>}
       </main>
@@ -467,6 +476,106 @@ function MiniWindow({ w }) {
           </span>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ━━━━━━━━━━━━━━━━━━━ S4 DASHBOARD TAB ━━━━━━━━━━━━━━━━━━━ */
+function S4DashTab({ s4 }) {
+  if (!s4?.enabled) return <div className="tab-content"><div className="empty-card">Strategy 4 not running</div></div>;
+  const st = s4.stats;
+  return (
+    <div className="tab-content">
+      <div className="stats-row">
+        <div className="sr-card"><span className="sr-big">{st.signals}</span><span className="sr-label">Signals</span></div>
+        <div className="sr-card"><span className="sr-big">{st.trades}</span><span className="sr-label">Trades</span></div>
+        <div className="sr-card"><span className="sr-big green">{st.wins}</span><span className="sr-label">Wins</span></div>
+        <div className="sr-card"><span className="sr-big red">{st.losses}</span><span className="sr-label">Losses</span></div>
+      </div>
+
+      <div className="pnl-hero">
+        <div className="pnl-main">
+          <span className="pnl-label">S4 Momentum v2 ($25/3s)</span>
+          <span className={`pnl-value ${st.pnl >= 0 ? "green" : "red"}`}>{fPnl(st.pnl)}</span>
+        </div>
+        <div className="pnl-details">
+          <div className="pnl-detail"><span className="pd-label">Win Rate</span><span>{st.win_rate}%</span></div>
+          <div className="pnl-detail"><span className="pd-label">Rejected</span><span className="yellow">{st.rejected}</span></div>
+          <div className="pnl-detail"><span className="pd-label">Signals</span><span>{st.signals}</span></div>
+          <div className="pnl-detail"><span className="pd-label">Trades</span><span>{st.trades}</span></div>
+        </div>
+        {st.last_action && <div className="pnl-action">{st.last_action}</div>}
+      </div>
+
+      {st.hourly_pnl && Object.keys(st.hourly_pnl).length > 0 && (
+        <>
+          <h3 className="section-title">Hourly P&L (resets daily)</h3>
+          <div className="hourly-grid">
+            {Object.entries(st.hourly_pnl).sort(([a],[b]) => a.localeCompare(b)).map(([hour, pnl]) => (
+              <div key={hour} className={`hourly-card ${pnl > 0 ? "hourly-win" : pnl < 0 ? "hourly-loss" : "hourly-flat"}`}>
+                <span className="hourly-time">{hour}</span>
+                <span className={`hourly-val ${pnl > 0 ? "green" : pnl < 0 ? "red" : ""}`}>{fPnl(pnl)}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      <div className="rules-card">
+        <div className="rule"><span className="rule-zone rule-profit">$25/3s</span><span className="rule-desc">BTC must move $25 in 3 seconds (stricter than S1)</span></div>
+        <div className="rule"><span className="rule-zone rule-wait">TREND</span><span className="rule-desc">Spike must match window open direction</span></div>
+        <div className="rule"><span className="rule-zone rule-moon">+5%</span><span className="rule-desc">Sell at 5%, moonbag at 15%, hard cap 20%</span></div>
+      </div>
+
+      <h3 className="section-title">Open Positions <span className="title-count">{s4.positions?.length || 0}</span></h3>
+      {(!s4.positions || s4.positions.length === 0) ? (
+        <div className="empty-card">No open positions — watching for $25 spikes...</div>
+      ) : s4.positions.map((p, i) => (
+        <div key={i} className="pos-card">
+          <div className="pos-top">
+            <span className={`pos-side ${p.side === "YES" ? "side-up" : "side-down"}`}>{p.side === "YES" ? "▲ Up" : "▼ Down"}</span>
+            {p.moonbag_mode && <span className="badge badge-moon">MOONBAG</span>}
+            <span className="pos-age">{p.age}s</span>
+          </div>
+          <div className="pos-grid">
+            <div className="pg"><span className="pg-label">Entry</span><span className="pg-val">${p.entry?.toFixed(3)}</span></div>
+            <div className="pg"><span className="pg-label">Qty</span><span className="pg-val">{p.qty?.toFixed(1)}</span></div>
+            <div className="pg"><span className="pg-label">Peak</span><span className="pg-val green">+{p.peak_gain?.toFixed(1)}%</span></div>
+          </div>
+          <div className="pos-mkt">{p.market}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function S4HistoryTab({ s4 }) {
+  if (!s4?.enabled) return <div className="tab-content"><div className="empty-card">Strategy 4 not running</div></div>;
+  const sorted = [...(s4.closed || [])].reverse();
+  return (
+    <div className="tab-content">
+      <h3 className="section-title">S4 Trade History <span className="title-count">{sorted.length}</span></h3>
+      {sorted.length === 0 ? (
+        <div className="empty-card">No trades yet</div>
+      ) : sorted.map((t, i) => {
+        const isWin = t.pnl >= 0;
+        return (
+          <div key={i} className={`hist-card ${isWin ? "hist-win" : "hist-loss"}`}>
+            <div className="hist-top">
+              <span className={`hist-side ${t.side === "YES" ? "green" : "red"}`}>{t.side === "YES" ? "▲ Up" : "▼ Down"}</span>
+              <div className="hist-right">
+                {t.pnl_pct != null && <span className={`hist-pct ${isWin ? "green" : "red"}`}>{t.pnl_pct >= 0 ? "+" : ""}{t.pnl_pct}%</span>}
+                <span className={`hist-pnl ${isWin ? "green" : "red"}`}>{fPnl(t.pnl)}</span>
+              </div>
+            </div>
+            <div className="hist-nums">
+              <span>Entry ${t.entry?.toFixed(3)}</span>
+              <span>Exit ${t.exit?.toFixed(3)}</span>
+            </div>
+            <div className="hist-mkt">{t.market}</div>
+          </div>
+        );
+      })}
     </div>
   );
 }
