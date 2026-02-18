@@ -146,14 +146,31 @@ class Strategy:
             # Checks $15 move in 2s with consistent direction (midpoint check)
             spike_delta = self.feed.detect_momentum(cfg.spike_move_usd, cfg.spike_window_sec)
             if spike_delta is not None:
-                side = "YES" if spike_delta > 0 else "NO"
+                spike_dir = "YES" if spike_delta > 0 else "NO"
+
+                # CRITICAL: verify spike direction matches window trend
+                # If BTC spiked UP but is still BELOW window open → it's a bounce
+                # in a downtrend, not a real signal. Don't buy.
+                window_move = btc_price - ws.window_open_price
+                window_dir = "YES" if window_move >= 0 else "NO"
+
+                if spike_dir != window_dir:
+                    log.info(
+                        "SPIKE REJECTED: $%+.0f spike but BTC is $%+.0f from window open "
+                        "(spike=%s, trend=%s) — wrong direction",
+                        spike_delta, window_move, spike_dir, window_dir,
+                    )
+                    self.stats.current_signal = f"REJECTED (wrong trend)"
+                    continue
+
+                side = spike_dir
                 ws.signal_fired = True
                 ws.signal_side = side
                 self.stats.total_signals += 1
                 self.stats.current_signal = f"{'UP' if side == 'YES' else 'DOWN'} ${spike_delta:+.0f}"
                 log.info(
-                    "MOMENTUM: $%+.0f in %.1fs → BUY %s | %s",
-                    spike_delta, cfg.spike_window_sec,
+                    "MOMENTUM: $%+.0f in %.1fs, BTC $%+.0f from open → BUY %s | %s",
+                    spike_delta, cfg.spike_window_sec, window_move,
                     side, ws.market.question[:50],
                 )
 

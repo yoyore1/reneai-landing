@@ -234,32 +234,41 @@ async def sim_window(s: aiohttp.ClientSession, mkt: Mkt, num: int) -> Optional[P
                 log(f"  Poly asks: Up={up_a_s}  Down={dn_a_s}")
 
             if spike_delta is not None and left > 20:
-                side = "Up" if spike_delta > 0 else "Down"
-                tok = mkt.up_tok if side == "Up" else mkt.down_tok
-                col = G if side == "Up" else RD
+                spike_dir = "Up" if spike_delta > 0 else "Down"
+                
+                # CRITICAL: verify spike matches window trend
+                window_move = px - open_px
+                window_dir = "Up" if window_move >= 0 else "Down"
+                
+                if spike_dir != window_dir:
+                    log(f"{Y}  SPIKE REJECTED: ${spike_delta:+.0f} spike but BTC is ${window_move:+.0f} from open — wrong direction{R}")
+                else:
+                    side = spike_dir
+                    tok = mkt.up_tok if side == "Up" else mkt.down_tok
+                    col = G if side == "Up" else RD
 
-                print()
-                log(f"{B}{col}*** MOMENTUM: ${spike_delta:+.0f} in {SPIKE_WINDOW_SEC}s → BUY {side.upper()} ***{R}")
+                    print()
+                    log(f"{B}{col}*** MOMENTUM: ${spike_delta:+.0f} in {SPIKE_WINDOW_SEC}s, BTC ${window_move:+.0f} from open → BUY {side.upper()} ***{R}")
 
-                ask, ask_s = await best_ask(s, tok)
-                bk_s = await full_book_str(s, tok)
-                log(f"  {side} full book: {bk_s}")
+                    ask, ask_s = await best_ask(s, tok)
+                    bk_s = await full_book_str(s, tok)
+                    log(f"  {side} full book: {bk_s}")
 
-                if ask is None or ask > 0.90:
-                    modeled = 0.52 + (abs(spike_delta) / 100) * 0.5
-                    modeled = min(modeled, 0.65)
-                    log(f"{Y}  Book too wide (ask={ask_s}). Using modeled fill @ ${modeled:.3f}{R}")
-                    ask = modeled
+                    if ask is None or ask > 0.90:
+                        modeled = 0.52 + (abs(spike_delta) / 100) * 0.5
+                        modeled = min(modeled, 0.65)
+                        log(f"{Y}  Book too wide (ask={ask_s}). Using modeled fill @ ${modeled:.3f}{R}")
+                        ask = modeled
 
-                qty = MAX_POSITION_USDC / ask
-                pos = Pos(
-                    side=side, token=tok,
-                    entry=ask, qty=qty,
-                    spent=MAX_POSITION_USDC,
-                    t_entry=time.time(),
-                )
-                log(f"{B}SIMULATED BUY: {qty:.2f} {side} shares @ ${ask:.3f} (${MAX_POSITION_USDC:.2f}){R}")
-                print()
+                    qty = MAX_POSITION_USDC / ask
+                    pos = Pos(
+                        side=side, token=tok,
+                        entry=ask, qty=qty,
+                        spent=MAX_POSITION_USDC,
+                        t_entry=time.time(),
+                    )
+                    log(f"{B}SIMULATED BUY: {qty:.2f} {side} shares @ ${ask:.3f} (${MAX_POSITION_USDC:.2f}){R}")
+                    print()
 
         else:
             # ── Have position, watch for exit ──
