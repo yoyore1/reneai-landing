@@ -274,6 +274,10 @@ class PolymarketClient:
             log.warning("Bad ask price %.4f for %s %s, skipping", ask_price, side, market.condition_id[:8])
             return Position(market=market, side=side, token_id=token_id)
 
+        if ask_price > 0.89:
+            log.warning("Ask $%.3f > $0.89 for %s %s — too expensive, skipping", ask_price, side, market.condition_id[:8])
+            return Position(market=market, side=side, token_id=token_id)
+
         qty = usdc_amount / ask_price
         qty = math.floor(qty * 100) / 100  # round down to 2 decimals
 
