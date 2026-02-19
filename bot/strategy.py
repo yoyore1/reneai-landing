@@ -219,17 +219,22 @@ class Strategy:
             window_ended = pos.market.window_end and now > pos.market.window_end
 
             # ── TREND REVERSAL CHECK ──
-            # If BTC crossed back to the wrong side of window open, get out.
-            # We bought because BTC was on our side. If it flips, we're toast.
+            # Only sell on reversal if:
+            #   1. BTC is $10+ on the wrong side of open (not just noise)
+            #   2. Our position is actually negative (don't dump winners)
+            REVERSAL_BUFFER = 10.0  # BTC must be $10+ past the open
             btc_now = self.feed.current_price
             ws_for_pos = self._windows.get(pos.market.condition_id)
-            if btc_now and ws_for_pos and ws_for_pos.window_open_price:
+            if btc_now and ws_for_pos and ws_for_pos.window_open_price and gain_pct < 0:
                 open_px = ws_for_pos.window_open_price
-                if pos.side == "YES" and btc_now < open_px:
-                    # We bought UP but BTC is now BELOW open → wrong side
+                wrong_side = (
+                    (pos.side == "YES" and btc_now < open_px - REVERSAL_BUFFER) or
+                    (pos.side == "NO" and btc_now > open_px + REVERSAL_BUFFER)
+                )
+                if wrong_side:
                     log.warning(
-                        "TREND REVERSAL: bought %s but BTC $%.2f < open $%.2f → selling",
-                        pos.side, btc_now, open_px,
+                        "TREND REVERSAL: %s but BTC $%.2f vs open $%.2f ($%+.0f) → selling at %.1f%%",
+                        pos.side, btc_now, open_px, btc_now - open_px, gain_pct,
                     )
                     sold = await self.poly.sell(pos)
                     if sold:
@@ -237,24 +242,7 @@ class Strategy:
                         self.stats.total_pnl += pos.pnl or 0
                         self._record_hourly_pnl(pos.pnl or 0)
                         self.stats.losses += 1
-                        self.stats.last_action = f"REVERSAL SELL {pos.side} (BTC flipped)"
-                        self._closed_positions.append(pos)
-                    else:
-                        still_open.append(pos)
-                    continue
-                elif pos.side == "NO" and btc_now > open_px:
-                    # We bought DOWN but BTC is now ABOVE open → wrong side
-                    log.warning(
-                        "TREND REVERSAL: bought %s but BTC $%.2f > open $%.2f → selling",
-                        pos.side, btc_now, open_px,
-                    )
-                    sold = await self.poly.sell(pos)
-                    if sold:
-                        self.stats.total_exits += 1
-                        self.stats.total_pnl += pos.pnl or 0
-                        self._record_hourly_pnl(pos.pnl or 0)
-                        self.stats.losses += 1
-                        self.stats.last_action = f"REVERSAL SELL {pos.side} (BTC flipped)"
+                        self.stats.last_action = f"REVERSAL {pos.side} (BTC ${btc_now - open_px:+.0f} from open)"
                         self._closed_positions.append(pos)
                     else:
                         still_open.append(pos)

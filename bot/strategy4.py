@@ -226,12 +226,13 @@ class Strategy4:
             now = time.time()
             ended = pos.market.window_end and now > pos.market.window_end
 
-            # Trend reversal check
+            # Trend reversal check — only if position is negative AND BTC is $10+ wrong
+            REVERSAL_BUFFER = 10.0
             btc_now = self.feed.current_price
             ws = self._windows.get(pos.market.condition_id)
-            if btc_now and ws and ws.open_price:
-                wrong = (pos.side == "YES" and btc_now < ws.open_price) or \
-                        (pos.side == "NO" and btc_now > ws.open_price)
+            if btc_now and ws and ws.open_price and gain < 0:
+                wrong = (pos.side == "YES" and btc_now < ws.open_price - REVERSAL_BUFFER) or \
+                        (pos.side == "NO" and btc_now > ws.open_price + REVERSAL_BUFFER)
                 if wrong:
                     log.warning("S4 Pro REVERSAL: %s flipped → selling", pos.side)
                     sold = await self.poly.sell(pos)
