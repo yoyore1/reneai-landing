@@ -280,8 +280,12 @@ class Strategy:
             should_sell = False
             sell_reason = ""
 
+            # Max take profit: sell at 96c — never wait for resolution
+            if bid >= 0.96:
+                should_sell = True
+                sell_reason = f"MAX TP @${bid:.2f}"
             # Hard cap: if gain hits 20%, sell no matter what
-            if gain_pct >= 20.0:
+            elif gain_pct >= 20.0:
                 should_sell = True
                 sell_reason = f"HARD CAP +{gain_pct:.1f}%"
             elif pos.moonbag_mode:
