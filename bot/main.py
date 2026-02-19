@@ -58,17 +58,15 @@ async def main(headless: bool = False):
     await poly.start()
     strat = Strategy(feed, poly)
 
-    # Strategy 2: passive limit orders
+    # Strategy 2: Momentum Pro
     from bot.strategy2 import Strategy2
-    strat2 = Strategy2(poly)
+    strat2 = Strategy2(feed, poly)
 
     # Strategy 3: late momentum — buy the leader at 1:30 remaining
     from bot.strategy3 import Strategy3
     strat3 = Strategy3(poly)
 
-    # Strategy 4: momentum v2 — $25/3s (stricter than S1's $15/2s)
-    from bot.strategy4 import Strategy4
-    strat4 = Strategy4(feed, poly)
+    strat4 = None  # S4 slot unused — S2 is Momentum Pro now
 
     # --- Graceful shutdown ---
     shutdown_event = asyncio.Event()
@@ -79,7 +77,6 @@ async def main(headless: bool = False):
         strat.stop()
         strat2.stop()
         strat3.stop()
-        strat4.stop()
         shutdown_event.set()
 
     loop = asyncio.get_running_loop()
@@ -95,7 +92,6 @@ async def main(headless: bool = False):
         asyncio.create_task(strat.run(), name="strategy-1"),
         asyncio.create_task(strat2.run(), name="strategy-2"),
         asyncio.create_task(strat3.run(), name="strategy-3"),
-        asyncio.create_task(strat4.run(), name="strategy-4"),
     ]
 
     # Web dashboard server (always runs)

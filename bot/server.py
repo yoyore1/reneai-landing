@@ -191,7 +191,7 @@ class DashboardServer:
         }
 
     def _build_s2_state(self) -> dict:
-        """Build strategy 2 state."""
+        """Build strategy 2 (Momentum Pro) state."""
         if not self._strat2:
             return {"enabled": False}
 
@@ -201,43 +201,35 @@ class DashboardServer:
         positions = []
         for p in s2.open_positions:
             positions.append({
-                "side": p.side,
-                "entry": p.entry_price,
-                "qty": p.qty,
-                "spent": p.spent,
-                "sell_target": p.sell_target,
+                "side": p.side, "entry": p.avg_entry, "qty": p.qty,
                 "age": round(time.time() - p.entry_time),
+                "peak_gain": round(p.peak_gain, 2),
+                "moonbag_mode": p.moonbag_mode,
                 "market": p.market.question,
-                "status": p.status,
             })
 
         closed = []
         for p in s2.closed_positions[-20:]:
             closed.append({
-                "side": p.side,
-                "entry": p.entry_price,
-                "exit": p.exit_price,
-                "qty": p.qty,
-                "spent": p.spent,
-                "pnl": round(p.pnl, 2) if p.pnl is not None else None,
-                "pnl_pct": round(((p.exit_price - p.entry_price) / p.entry_price) * 100, 1) if p.exit_price and p.entry_price else None,
+                "side": p.side, "entry": p.avg_entry, "exit": p.exit_price,
+                "qty": p.qty, "pnl": round(p.pnl, 2) if p.pnl is not None else None,
+                "pnl_pct": round(((p.exit_price - p.avg_entry) / p.avg_entry) * 100, 1) if p.exit_price and p.avg_entry else None,
                 "market": p.market.question,
-                "status": p.status,
             })
 
         total = st.wins + st.losses
         return {
             "enabled": True,
             "stats": {
-                "bought": st.markets_bought,
-                "sells_filled": st.sells_filled,
-                "wins": st.wins,
-                "losses": st.losses,
+                "signals": st.total_signals, "trades": st.total_trades,
+                "exits": st.total_exits,
+                "rejected_volume": getattr(st, 'rejected_volume', 0),
+                "rejected_trend": getattr(st, 'rejected_trend', 0),
+                "wins": st.wins, "losses": st.losses,
                 "pnl": round(st.total_pnl, 2),
                 "win_rate": round((st.wins / total) * 100, 1) if total > 0 else 0,
                 "last_action": st.last_action,
-                "hourly_pnl": dict(st.hourly_pnl) if hasattr(st, 'hourly_pnl') else {},
-                "last_hour_report": st.last_hour_report if hasattr(st, 'last_hour_report') else "",
+                "hourly_pnl": dict(st.hourly_pnl),
             },
             "positions": positions,
             "closed": closed,
