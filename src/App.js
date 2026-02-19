@@ -163,7 +163,7 @@ function App() {
           <span className={`strat-pnl ${(s3?.stats?.pnl || 0) >= 0 ? "green" : "red"}`}>{fPnl(s3?.stats?.pnl || 0)}</span>
         </button>
         <button className={`strat-btn ${strat === "s4" ? "strat-active strat-s4" : ""}`} onClick={() => { setStrat("s4"); setTab("dash"); }}>
-          <span className="strat-name">S4: $25/3s</span>
+          <span className="strat-name">S4: Pro</span>
           <span className={`strat-pnl ${(s4?.stats?.pnl || 0) >= 0 ? "green" : "red"}`}>{fPnl(s4?.stats?.pnl || 0)}</span>
         </button>
       </div>
@@ -484,25 +484,26 @@ function MiniWindow({ w }) {
 function S4DashTab({ s4 }) {
   if (!s4?.enabled) return <div className="tab-content"><div className="empty-card">Strategy 4 not running</div></div>;
   const st = s4.stats;
+  const totalRejected = (st.rejected_volume || 0) + (st.rejected_volatility || 0) + (st.rejected_trend || 0) + (st.rejected_cooldown || 0);
   return (
     <div className="tab-content">
       <div className="stats-row">
-        <div className="sr-card"><span className="sr-big">{st.signals}</span><span className="sr-label">Signals</span></div>
         <div className="sr-card"><span className="sr-big">{st.trades}</span><span className="sr-label">Trades</span></div>
         <div className="sr-card"><span className="sr-big green">{st.wins}</span><span className="sr-label">Wins</span></div>
         <div className="sr-card"><span className="sr-big red">{st.losses}</span><span className="sr-label">Losses</span></div>
+        <div className="sr-card"><span className="sr-big yellow">{totalRejected}</span><span className="sr-label">Filtered</span></div>
       </div>
 
       <div className="pnl-hero">
         <div className="pnl-main">
-          <span className="pnl-label">S4 Momentum v2 ($25/3s)</span>
+          <span className="pnl-label">Momentum Pro</span>
           <span className={`pnl-value ${st.pnl >= 0 ? "green" : "red"}`}>{fPnl(st.pnl)}</span>
         </div>
         <div className="pnl-details">
           <div className="pnl-detail"><span className="pd-label">Win Rate</span><span>{st.win_rate}%</span></div>
-          <div className="pnl-detail"><span className="pd-label">Rejected</span><span className="yellow">{st.rejected}</span></div>
           <div className="pnl-detail"><span className="pd-label">Signals</span><span>{st.signals}</span></div>
-          <div className="pnl-detail"><span className="pd-label">Trades</span><span>{st.trades}</span></div>
+          <div className="pnl-detail"><span className="pd-label">Vol Rejects</span><span className="red">{st.rejected_volume || 0}</span></div>
+          <div className="pnl-detail"><span className="pd-label">Trend Rejects</span><span className="red">{st.rejected_trend || 0}</span></div>
         </div>
         {st.last_action && <div className="pnl-action">{st.last_action}</div>}
       </div>
@@ -521,15 +522,17 @@ function S4DashTab({ s4 }) {
         </>
       )}
 
+      <h3 className="section-title">Filters</h3>
       <div className="rules-card">
-        <div className="rule"><span className="rule-zone rule-profit">$25/3s</span><span className="rule-desc">BTC must move $25 in 3 seconds (stricter than S1)</span></div>
-        <div className="rule"><span className="rule-zone rule-wait">TREND</span><span className="rule-desc">Spike must match window open direction</span></div>
-        <div className="rule"><span className="rule-zone rule-moon">+5%</span><span className="rule-desc">Sell at 5%, moonbag at 15%, hard cap 20%</span></div>
+        <div className="rule"><span className="rule-zone rule-profit">VOLUME</span><span className="rule-desc">Spike must have 2+ BTC traded in last 5s</span></div>
+        <div className="rule"><span className="rule-zone rule-moon">TIME</span><span className="rule-desc">$25 early → $20 mid → $15 late in window</span></div>
+        <div className="rule"><span className="rule-zone rule-wait">RANGE</span><span className="rule-desc">BTC must have $30+ range in last 10 min (not flat)</span></div>
+        <div className="rule"><span className="rule-zone rule-danger">COOLDOWN</span><span className="rule-desc">2 losses in a row → 10 min pause</span></div>
       </div>
 
       <h3 className="section-title">Open Positions <span className="title-count">{s4.positions?.length || 0}</span></h3>
       {(!s4.positions || s4.positions.length === 0) ? (
-        <div className="empty-card">No open positions — watching for $25 spikes...</div>
+        <div className="empty-card">No open positions — waiting for high-quality signal...</div>
       ) : s4.positions.map((p, i) => (
         <div key={i} className="pos-card">
           <div className="pos-top">

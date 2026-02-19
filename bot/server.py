@@ -315,7 +315,11 @@ class DashboardServer:
             "enabled": True,
             "stats": {
                 "signals": st.total_signals, "trades": st.total_trades,
-                "exits": st.total_exits, "rejected": st.rejected,
+                "exits": st.total_exits,
+                "rejected_volume": getattr(st, 'rejected_volume', 0),
+                "rejected_volatility": getattr(st, 'rejected_volatility', 0),
+                "rejected_trend": getattr(st, 'rejected_trend', 0),
+                "rejected_cooldown": getattr(st, 'rejected_cooldown', 0),
                 "wins": st.wins, "losses": st.losses,
                 "pnl": round(st.total_pnl, 2),
                 "win_rate": round((st.wins / total) * 100, 1) if total > 0 else 0,

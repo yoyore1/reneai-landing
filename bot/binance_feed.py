@@ -31,8 +31,12 @@ class BinanceFeed:
         self.last_update: float = 0.0
         self._running = False
         self._ws = None
-        # Rolling price buffer: last 10 seconds of ticks
+        # Rolling price buffer: last 10 seconds of ticks (timestamp, price)
         self.price_buffer: collections.deque = collections.deque(maxlen=500)
+        # Volume buffer: (timestamp, qty_btc) for volume analysis
+        self.volume_buffer: collections.deque = collections.deque(maxlen=2000)
+        # Price range buffer: (timestamp, price) for longer-term range calc
+        self.range_buffer: collections.deque = collections.deque(maxlen=5000)
 
     def get_price_n_seconds_ago(self, n: float) -> Optional[float]:
         """Return the price from approximately `n` seconds ago."""
@@ -94,6 +98,19 @@ class BinanceFeed:
 
         return None
 
+    def get_volume_btc(self, window_sec: float) -> float:
+        """Total BTC volume traded in the last `window_sec` seconds."""
+        cutoff = time.time() - window_sec
+        return sum(qty for ts, qty in self.volume_buffer if ts >= cutoff)
+
+    def get_price_range(self, window_sec: float) -> float:
+        """High - Low price range over the last `window_sec` seconds."""
+        cutoff = time.time() - window_sec
+        prices = [px for ts, px in self.range_buffer if ts >= cutoff]
+        if len(prices) < 2:
+            return 0.0
+        return max(prices) - min(prices)
+
     # ------------------------------------------------------------------
     # bootstrap: grab a REST snapshot so we have a price before WS fires
     # ------------------------------------------------------------------
@@ -129,6 +146,10 @@ class BinanceFeed:
                         self.current_price = float(msg["p"])
                         self.last_update = now
                         self.price_buffer.append((now, self.current_price))
+                        self.range_buffer.append((now, self.current_price))
+                        qty = float(msg.get("q", 0))
+                        if qty > 0:
+                            self.volume_buffer.append((now, qty))
             except (websockets.ConnectionClosed, ConnectionError, OSError) as exc:
                 log.warning("Binance WS disconnected (%s), reconnecting in 2s...", exc)
                 await asyncio.sleep(2)
