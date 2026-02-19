@@ -162,6 +162,10 @@ function App() {
           <span className="strat-name">S3: Late</span>
           <span className={`strat-pnl ${(s3?.stats?.pnl || 0) >= 0 ? "green" : "red"}`}>{fPnl(s3?.stats?.pnl || 0)}</span>
         </button>
+        <button className={`strat-btn ${strat === "s4" ? "strat-active strat-s4" : ""}`} onClick={() => { setStrat("s4"); setTab("dash"); }}>
+          <span className="strat-name">S4: Safe</span>
+          <span className={`strat-pnl ${(s4?.stats?.pnl || 0) >= 0 ? "green" : "red"}`}>{fPnl(s4?.stats?.pnl || 0)}</span>
+        </button>
       </div>
 
       {/* ── Content ── */}
@@ -180,6 +184,11 @@ function App() {
         {strat === "s3" && <>
           {tab === "dash" && <S3DashTab s3={s3} />}
           {tab === "history" && <S3HistoryTab s3={s3} />}
+          {tab === "settings" && <SettingsTab config={config} events={events} uptime={uptime} stats={stats} />}
+        </>}
+        {strat === "s4" && <>
+          {tab === "dash" && <S4DashTab s4={s4} />}
+          {tab === "history" && <S4HistoryTab s4={s4} />}
           {tab === "settings" && <SettingsTab config={config} events={events} uptime={uptime} stats={stats} />}
         </>}
       </main>

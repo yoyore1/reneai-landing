@@ -66,7 +66,9 @@ async def main(headless: bool = False):
     from bot.strategy3 import Strategy3
     strat3 = Strategy3(poly)
 
-    strat4 = None  # S4 slot unused — S2 is Momentum Pro now
+    # Strategy 4: S1 with reversal check + 96c cap + 89c max entry
+    from bot.strategy4 import Strategy4
+    strat4 = Strategy4(feed, poly)
 
     # --- Graceful shutdown ---
     shutdown_event = asyncio.Event()
@@ -92,6 +94,7 @@ async def main(headless: bool = False):
         asyncio.create_task(strat.run(), name="strategy-1"),
         asyncio.create_task(strat2.run(), name="strategy-2"),
         asyncio.create_task(strat3.run(), name="strategy-3"),
+        asyncio.create_task(strat4.run(), name="strategy-4"),
     ]
 
     # Web dashboard server (always runs)
