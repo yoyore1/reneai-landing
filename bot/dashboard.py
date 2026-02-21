@@ -47,7 +47,7 @@ def build_dashboard(feed: BinanceFeed, strat: Strategy) -> Layout:
     header_text = (
         f"  BTC/USDT: [{price_color}]{price_str}[/]  |  "
         f"Mode: {mode}  |  "
-        f"Spike threshold: {cfg.spike_threshold_pct}%  |  "
+        f"Spike: ${cfg.spike_move_usd:.0f}/ {cfg.spike_window_sec}s  |  "
         f"Profit target: {cfg.profit_target_pct}%  |  "
         f"Max position: ${cfg.max_position_usdc}"
     )
