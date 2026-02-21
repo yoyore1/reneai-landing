@@ -298,6 +298,7 @@ class DashboardServer:
             entry_sum = p.yes_entry + p.no_entry
             positions.append({
                 "side": "Yes+No", "entry": round(entry_sum, 3), "qty": p.qty,
+                "yes_entry": round(p.yes_entry, 3), "no_entry": round(p.no_entry, 3),
                 "spent": round(p.spent_yes + p.spent_no, 2), "age": round(time.time() - p.entry_time),
                 "market": p.market.question, "status": p.status,
             })
@@ -308,6 +309,8 @@ class DashboardServer:
             closed.append({
                 "side": "Yes+No", "entry": round(entry_sum, 3), "exit": 1.0,
                 "qty": p.qty, "spent": round(p.spent_yes + p.spent_no, 2),
+                "yes_entry": round(p.yes_entry, 3), "no_entry": round(p.no_entry, 3),
+                "winning_side": p.winning_side, "losing_side": p.losing_side,
                 "pnl": round(p.pnl, 2) if p.pnl is not None else None,
                 "pnl_pct": pnl_pct,
                 "market": p.market.question, "status": p.status,

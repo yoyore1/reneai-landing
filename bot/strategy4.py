@@ -47,13 +47,16 @@ class S4ArbPosition:
     entry_time: float
     status: str = "open"  # open | resolved
     pnl: Optional[float] = None
+    winning_side: Optional[str] = None   # "YES" or "NO" at resolution
+    losing_side: Optional[str] = None
 
 
 class Strategy4:
     """Buy both sides when yes_ask + no_ask < 1; hold to resolution for locked-in profit."""
 
-    def __init__(self, poly: PolymarketClient):
+    def __init__(self, poly: PolymarketClient, feed=None):
         self.poly = poly
+        self.feed = feed  # optional: for resolution display (which side won)
         self.stats = S4Stats()
         self._positions: List[S4ArbPosition] = []
         self._closed: List[S4ArbPosition] = []
@@ -115,6 +118,11 @@ class Strategy4:
             spent_yes = qty * yes_ask
             spent_no = qty * no_ask
             # Execute both legs
+            # --- Transparent: log what we're buying ---
+            log.info(
+                "[S4] BUY YES @ $%.3f (%.2f shares) = $%.2f  |  BUY NO @ $%.3f (%.2f shares) = $%.2f  |  Total spend $%.2f → receive $%.2f at resolution",
+                yes_ask, qty, spent_yes, no_ask, qty, spent_no, spent_yes + spent_no, qty * 1.0,
+            )
             pos_yes = await self.poly.buy(mkt, "YES", spent_yes)
             pos_no = await self.poly.buy(mkt, "NO", spent_no)
             if not pos_yes.filled or not pos_no.filled:
@@ -142,11 +150,11 @@ class Strategy4:
             self._traded_cids.add(cid)
             self.stats.trades += 1
             edge = 1.0 - (arb.yes_entry + arb.no_entry)
-            self.stats.last_action = f"S4 ARB {arb.qty:.2f} shares each | edge {edge*100:.1f}c"
+            total_spent = arb.spent_yes + arb.spent_no
+            self.stats.last_action = f"S4 BOUGHT YES @ {arb.yes_entry:.2f} + NO @ {arb.no_entry:.2f} | {arb.qty:.2f} each | spend ${total_spent:.2f} → get ${arb.qty:.2f} | +${edge*arb.qty:.2f}"
             log.info(
-                "[S4] ARB BUY BOTH | yes=%.3f no=%.3f sum=%.3f | qty=%.2f each | edge=%.1fc | %s",
-                arb.yes_entry, arb.no_entry, arb.yes_entry + arb.no_entry,
-                arb.qty, edge * 100, mkt.question[:45],
+                "[S4] FILLED: YES @ $%.3f (%.2f sh) + NO @ $%.3f (%.2f sh) | spend $%.2f → receive $%.2f | profit $%.2f | %s",
+                arb.yes_entry, arb.qty, arb.no_entry, arb.qty, total_spent, arb.qty, edge * arb.qty, mkt.question[:45],
             )
 
         await self._check_positions()
@@ -177,14 +185,38 @@ class Strategy4:
             arb.status = "resolved"
             total_spent = arb.spent_yes + arb.spent_no
             arb.pnl = arb.qty * 1.0 - total_spent
+            received = arb.qty * 1.0
+
+            # Who won? (Yes = BTC above strike, No = BTC below strike)
+            winning_side = None
+            losing_side = None
+            resolution_msg = ""
+            if self.feed and getattr(self.feed, "current_price", None) is not None and arb.market.reference_price is not None:
+                btc = self.feed.current_price
+                strike = arb.market.reference_price
+                if btc > strike:
+                    winning_side = "YES"
+                    losing_side = "NO"
+                    resolution_msg = "YES won (BTC $%.0f > strike $%.0f)" % (btc, strike)
+                else:
+                    winning_side = "NO"
+                    losing_side = "YES"
+                    resolution_msg = "NO won (BTC $%.0f < strike $%.0f)" % (btc, strike)
+                arb.winning_side = winning_side
+                arb.losing_side = losing_side
+            else:
+                resolution_msg = "Resolved (winner unknown — no price feed)"
+
             self.stats.total_pnl += arb.pnl
             self.stats.wins += 1
             self._record_hourly_pnl(arb.pnl)
             self._closed.append(arb)
-            self.stats.last_action = f"S4 RESOLVED +${arb.pnl:.2f}"
+            self.stats.last_action = "S4 RESOLVED: %s | %s $1.00, %s $0.00 | received $%.2f profit $%.2f" % (
+                resolution_msg, winning_side or "win", losing_side or "lose", received, arb.pnl,
+            )
             log.info(
-                "[S4] RESOLVED | PnL $%+.2f (qty=%.2f spent=%.2f) | %s",
-                arb.pnl, arb.qty, total_spent, arb.market.question[:45],
+                "[S4] RESOLVED | %s | Winning side (%s) paid $1.00, losing side (%s) paid $0.00 | Received $%.2f, spent $%.2f, profit $%+.2f | %s",
+                resolution_msg, winning_side or "?", losing_side or "?", received, total_spent, arb.pnl, arb.market.question[:45],
             )
 
         self._positions = still_open

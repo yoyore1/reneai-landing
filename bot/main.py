@@ -66,9 +66,9 @@ async def main(headless: bool = False):
     from bot.strategy3 import Strategy3
     strat3 = Strategy3(poly, feed)
 
-    # Strategy 4: Polymarket-only last-minute momentum (no Binance)
+    # Strategy 4: Buy both sides arb (feed used for resolution display: which side won)
     from bot.strategy4 import Strategy4
-    strat4 = Strategy4(poly)
+    strat4 = Strategy4(poly, feed)
 
     # --- Graceful shutdown ---
     shutdown_event = asyncio.Event()
