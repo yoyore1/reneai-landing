@@ -4,9 +4,9 @@ Strategy 3: Late Momentum — Buy the Leader at 1:30 Remaining
 Logic:
   - Monitor each 5-min window from the start
   - Track the highest price Up and Down reach between 2:15 and 1:30 remaining
-  - At 1:00 remaining (was 2:00 — enable more buys):
-    - If BOTH Up and Down hit $0.65+ during analysis window → SKIP (choppy, no edge)
-    - Otherwise, if Up OR Down is $0.70+ → BUY that side, hold to resolution
+  - Buy at 2:00 remaining or less: keep checking every tick; buy as soon as one side hits 70c+ (and not choppy).
+  - If we get to 1:00 remaining and still no side is 70c+ → don't buy at all for the rest of that market.
+  - Analysis 3:00→2:00: track highs for choppy check (both 65c+ → skip).
   - Manipulation exit: if market favors one side (e.g. 60c+) but BTC price is on the other side
     of the strike, sell that side immediately to avoid liquidation.
   - Resolution: winning side pays $1.00, losing side pays $0.00
@@ -28,10 +28,11 @@ from bot.polymarket import PolymarketClient, Market, Position
 
 log = logging.getLogger("strategy3")
 
-BUY_THRESHOLD = 0.70       # side must be 70c+ at the 1:30 mark
+BUY_THRESHOLD = 0.70       # side must be 70c+ to buy
 SKIP_THRESHOLD = 0.65      # if BOTH sides hit this during analysis window, skip
-ANALYSIS_START = 180.0      # start tracking at 3:00 remaining
-ANALYSIS_END = 60.0         # trigger buy decision at 1:00 remaining (was 2:00 — enable more buys)
+ANALYSIS_START = 180.0     # start tracking at 3:00 remaining
+BUY_AT_REMAINING = 120.0   # actually buy at 2:00 remaining
+SKIP_NO_LEADER_AT = 60.0   # at 1:00 remaining: if neither side 70c+, don't buy at all
 USDC_PER_TRADE = 50.0
 MANIPULATION_FAVOR_CENTS = 0.60   # detect manipulation: one side 60c+ but BTC on opposite side of strike
 MANIPULATION_HARD_SELL_CENTS = 0.30  # when manipulation detected, hard sell if our side drops to 30c or less
@@ -74,6 +75,8 @@ class S3WindowTracker:
     down_high: float = 0.0    # highest Down price seen during analysis window
     analyzing: bool = False   # are we in the analysis window?
     decision_made: bool = False
+    no_leader_at_1min: bool = False   # at 1 min remaining neither side was 70c+ → don't buy
+    checked_no_leader_1min: bool = False  # have we run the 1-min check
 
 
 class Strategy3:
@@ -93,8 +96,8 @@ class Strategy3:
     async def run(self):
         self._running = True
         log.info(
-            "Strategy 3 started | buy_threshold=$%.2f | skip_if_both>=$%.2f | at 1:00 remaining",
-            BUY_THRESHOLD, SKIP_THRESHOLD,
+            "Strategy 3 started | buy at 2:00 or less (first 70c+); if no 70c+ by 1:00 → skip market | threshold=$%.2f",
+            BUY_THRESHOLD,
         )
         while self._running:
             try:
@@ -130,8 +133,8 @@ class Strategy3:
                 self._trackers.pop(cid, None)
                 continue
 
-            # Analysis window: 2:45 to 1:30 remaining
-            if remaining <= ANALYSIS_START and remaining > ANALYSIS_END:
+            # Analysis window: 3:00 to 2:00 remaining (track highs)
+            if remaining <= ANALYSIS_START and remaining > BUY_AT_REMAINING:
                 if not tracker.analyzing:
                     tracker.analyzing = True
                     log.info("S3: Analyzing %s (%.0fs left)", mkt.question[:40], remaining)
@@ -151,39 +154,50 @@ class Strategy3:
                     if down_bid and down_bid > tracker.down_high:
                         tracker.down_high = down_bid
 
-            # Decision time: 1:00 remaining
-            elif remaining <= ANALYSIS_END and not tracker.decision_made:
-                tracker.decision_made = True
-                self._decided_cids.add(cid)
-                self.stats.markets_analyzed += 1
+            # At 1:00 remaining: if still no side 70c+, give up for this market (don't buy rest of window)
+            if remaining <= SKIP_NO_LEADER_AT and not tracker.checked_no_leader_1min:
+                tracker.checked_no_leader_1min = True
+                await self.poly.get_market_prices(mkt)
+                up_bid_1m = await self.poly._get_best_bid(mkt.yes_token_id)
+                down_bid_1m = await self.poly._get_best_bid(mkt.no_token_id)
+                up_1m = up_bid_1m or 0
+                down_1m = down_bid_1m or 0
+                if up_1m < BUY_THRESHOLD and down_1m < BUY_THRESHOLD:
+                    tracker.no_leader_at_1min = True
+                    log.info("S3: At 1:00 left neither side 70c+ (Up=%.2f Down=%.2f) → won't buy this market", up_1m, down_1m)
 
-                # Get current prices
+            # Buy window: 2:00 remaining or less. Every tick: buy as soon as one side 70c+; or skip if no leader at 1m / choppy
+            if remaining <= BUY_AT_REMAINING and not tracker.decision_made:
+                # Already passed 1 min with no leader → give up
+                if tracker.no_leader_at_1min:
+                    tracker.decision_made = True
+                    self._decided_cids.add(cid)
+                    self.stats.markets_analyzed += 1
+                    self.stats.skipped_no_leader += 1
+                    self.stats.last_action = "SKIP NO LEADER (at 1:00 neither 70c+)"
+                    log.info("S3 SKIP: No leader at 1:00 → not buying for rest of market")
+                    continue
+
+                # Choppy (both hit 65c+ in analysis) → skip
+                if tracker.up_high >= SKIP_THRESHOLD and tracker.down_high >= SKIP_THRESHOLD:
+                    tracker.decision_made = True
+                    self._decided_cids.add(cid)
+                    self.stats.markets_analyzed += 1
+                    self.stats.skipped_choppy += 1
+                    self.stats.last_action = f"SKIP CHOPPY (Up high={tracker.up_high:.2f} Down high={tracker.down_high:.2f})"
+                    log.info("S3 SKIP: Both sides hit $%.2f+ — too choppy", SKIP_THRESHOLD)
+                    continue
+
+                # Get current prices: buy as soon as one side is 70c+
                 await self.poly.get_market_prices(mkt)
                 up_bid = await self.poly._get_best_bid(mkt.yes_token_id)
                 down_bid = await self.poly._get_best_bid(mkt.no_token_id)
                 up_now = up_bid or 0
                 down_now = down_bid or 0
 
-                log.info(
-                    "S3 DECISION: %s | Up now=$%.3f (high=$%.3f) | Down now=$%.3f (high=$%.3f)",
-                    mkt.question[:35], up_now, tracker.up_high, down_now, tracker.down_high,
-                )
-
-                # Check skip condition: both sides hit 65c+ during analysis
-                if tracker.up_high >= SKIP_THRESHOLD and tracker.down_high >= SKIP_THRESHOLD:
-                    self.stats.skipped_choppy += 1
-                    self.stats.last_action = f"SKIP CHOPPY (Up high={tracker.up_high:.2f} Down high={tracker.down_high:.2f})"
-                    log.info(
-                        "S3 SKIP: Both sides hit $%.2f+ (Up=%.3f Down=%.3f) — too choppy",
-                        SKIP_THRESHOLD, tracker.up_high, tracker.down_high,
-                    )
-                    continue
-
-                # Check buy condition: one side is 70c+
                 buy_side = None
                 buy_price = 0
                 buy_token = ""
-
                 if up_now >= BUY_THRESHOLD and up_now >= down_now:
                     buy_side = "Up"
                     buy_price = up_now
@@ -193,34 +207,28 @@ class Strategy3:
                     buy_price = down_now
                     buy_token = mkt.no_token_id
 
-                if buy_side is None:
-                    self.stats.skipped_no_leader += 1
-                    self.stats.last_action = f"SKIP NO LEADER (Up={up_now:.2f} Down={down_now:.2f})"
-                    log.info(
-                        "S3 SKIP: No side at $%.2f+ (Up=%.3f Down=%.3f)",
-                        BUY_THRESHOLD, up_now, down_now,
+                if buy_side is not None:
+                    # Buy now (at 2 min or less; could be 1:45, 1:30, etc.)
+                    tracker.decision_made = True
+                    self._decided_cids.add(cid)
+                    self.stats.markets_analyzed += 1
+                    ask = mkt.yes_ask if buy_side == "Up" else mkt.no_ask
+                    if ask <= 0 or ask >= 1.0:
+                        ask = buy_price
+                    qty = math.floor((USDC_PER_TRADE / ask) * 100) / 100
+                    pos = S3Position(
+                        market=mkt, side=buy_side, token_id=buy_token,
+                        entry_price=ask, qty=qty, spent=USDC_PER_TRADE,
+                        entry_time=time.time(),
                     )
-                    continue
-
-                # BUY
-                # Use the ask price for entry (what we'd actually pay)
-                ask = mkt.yes_ask if buy_side == "Up" else mkt.no_ask
-                if ask <= 0 or ask >= 1.0:
-                    ask = buy_price  # fallback to bid
-
-                qty = math.floor((USDC_PER_TRADE / ask) * 100) / 100
-                pos = S3Position(
-                    market=mkt, side=buy_side, token_id=buy_token,
-                    entry_price=ask, qty=qty, spent=USDC_PER_TRADE,
-                    entry_time=time.time(),
-                )
-                self._positions.append(pos)
-                self.stats.trades += 1
-                self.stats.last_action = f"BUY {buy_side} @ ${ask:.3f} | {mkt.question[:30]}"
-                log.info(
-                    "[S3] BUY %s %.1f shares @ $%.3f ($%.2f) | 1:00 left | %s",
-                    buy_side, qty, ask, USDC_PER_TRADE, mkt.question[:45],
-                )
+                    self._positions.append(pos)
+                    self.stats.trades += 1
+                    self.stats.last_action = f"BUY {buy_side} @ ${ask:.3f} | {mkt.question[:30]}"
+                    log.info(
+                        "[S3] BUY %s %.1f shares @ $%.3f ($%.2f) | %.0fs left | %s",
+                        buy_side, qty, ask, USDC_PER_TRADE, remaining, mkt.question[:45],
+                    )
+                # else: no side 70c+ yet, keep waiting (don't set decision_made)
 
         # Check positions for resolution
         await self._check_positions()
