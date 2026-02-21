@@ -28,11 +28,12 @@ MAX_LOG_ENTRIES = 50
 
 class DashboardServer:
 
-    def __init__(self, feed, strategy, strategy2=None, strategy3=None, host="0.0.0.0", port=8899):
+    def __init__(self, feed, strategy, strategy2=None, strategy3=None, strategy4=None, host="0.0.0.0", port=8899):
         self._feed = feed
         self._strat = strategy
         self._strat2 = strategy2
         self._strat3 = strategy3
+        self._strat4 = strategy4
         self._host = host
         self._port = port
         self._clients: Set[web.WebSocketResponse] = set()
@@ -186,6 +187,7 @@ class DashboardServer:
             "events": list(self._event_log),
             "s2": self._build_s2_state(),
             "s3": self._build_s3_state(),
+            "s4": self._build_s4_state(),
         }
 
     def _build_s2_state(self) -> dict:
@@ -276,6 +278,47 @@ class DashboardServer:
                 "trades": st.trades,
                 "skipped_choppy": st.skipped_choppy,
                 "skipped_no_leader": st.skipped_no_leader,
+                "wins": st.wins, "losses": st.losses,
+                "pnl": round(st.total_pnl, 2),
+                "win_rate": round((st.wins / total) * 100, 1) if total > 0 else 0,
+                "last_action": st.last_action,
+                "hourly_pnl": dict(st.hourly_pnl),
+            },
+            "positions": positions,
+            "closed": closed,
+        }
+
+    def _build_s4_state(self) -> dict:
+        if not self._strat4:
+            return {"enabled": False}
+        s4 = self._strat4
+        st = s4.stats
+        positions = []
+        for p in s4.open_positions:
+            entry_sum = p.yes_entry + p.no_entry
+            positions.append({
+                "side": "Yes+No", "entry": round(entry_sum, 3), "qty": p.qty,
+                "spent": round(p.spent_yes + p.spent_no, 2), "age": round(time.time() - p.entry_time),
+                "market": p.market.question, "status": p.status,
+            })
+        closed = []
+        for p in s4.closed_positions[-20:]:
+            entry_sum = p.yes_entry + p.no_entry
+            pnl_pct = round((1.0 - entry_sum) / entry_sum * 100, 1) if entry_sum else None
+            closed.append({
+                "side": "Yes+No", "entry": round(entry_sum, 3), "exit": 1.0,
+                "qty": p.qty, "spent": round(p.spent_yes + p.spent_no, 2),
+                "pnl": round(p.pnl, 2) if p.pnl is not None else None,
+                "pnl_pct": pnl_pct,
+                "market": p.market.question, "status": p.status,
+            })
+        total = st.wins + st.losses
+        return {
+            "enabled": True,
+            "stats": {
+                "checked": st.markets_checked,
+                "trades": st.trades,
+                "skipped_no_edge": st.skipped_no_edge,
                 "wins": st.wins, "losses": st.losses,
                 "pnl": round(st.total_pnl, 2),
                 "win_rate": round((st.wins / total) * 100, 1) if total > 0 else 0,
