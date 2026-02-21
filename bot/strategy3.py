@@ -4,9 +4,11 @@ Strategy 3: Late Momentum — Buy the Leader at 1:30 Remaining
 Logic:
   - Monitor each 5-min window from the start
   - Track the highest price Up and Down reach between 2:15 and 1:30 remaining
-  - At exactly 1:30 remaining:
-    - If BOTH Up and Down hit $0.65+ during 2:15→1:30 → SKIP (choppy, no edge)
+  - At 1:00 remaining (was 2:00 — enable more buys):
+    - If BOTH Up and Down hit $0.65+ during analysis window → SKIP (choppy, no edge)
     - Otherwise, if Up OR Down is $0.70+ → BUY that side, hold to resolution
+  - Manipulation exit: if market favors one side (e.g. 60c+) but BTC price is on the other side
+    of the strike, sell that side immediately to avoid liquidation.
   - Resolution: winning side pays $1.00, losing side pays $0.00
 
 The idea: by 1:30 left the direction is mostly decided. If one side is
@@ -22,15 +24,17 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Set
 
-from bot.polymarket import PolymarketClient, Market
+from bot.polymarket import PolymarketClient, Market, Position
 
 log = logging.getLogger("strategy3")
 
 BUY_THRESHOLD = 0.70       # side must be 70c+ at the 1:30 mark
 SKIP_THRESHOLD = 0.65      # if BOTH sides hit this during analysis window, skip
 ANALYSIS_START = 180.0      # start tracking at 3:00 remaining
-ANALYSIS_END = 120.0        # trigger buy decision at 2:00 remaining
+ANALYSIS_END = 60.0         # trigger buy decision at 1:00 remaining (was 2:00 — enable more buys)
 USDC_PER_TRADE = 50.0
+MANIPULATION_FAVOR_CENTS = 0.60   # detect manipulation: one side 60c+ but BTC on opposite side of strike
+MANIPULATION_HARD_SELL_CENTS = 0.30  # when manipulation detected, hard sell if our side drops to 30c or less
 
 
 @dataclass
@@ -59,6 +63,7 @@ class S3Position:
     exit_price: Optional[float] = None
     pnl: Optional[float] = None
     status: str = "open"
+    manipulation_detected: bool = False  # when True, hard sell at 30c or below
 
 
 @dataclass
@@ -73,8 +78,9 @@ class S3WindowTracker:
 
 class Strategy3:
 
-    def __init__(self, poly: PolymarketClient):
+    def __init__(self, poly: PolymarketClient, feed=None):
         self.poly = poly
+        self.feed = feed  # Binance feed for BTC price (manipulation check)
         self.stats = S3Stats()
         self._positions: List[S3Position] = []
         self._closed: List[S3Position] = []
@@ -87,7 +93,7 @@ class Strategy3:
     async def run(self):
         self._running = True
         log.info(
-            "Strategy 3 started | buy_threshold=$%.2f | skip_if_both>=$%.2f | at 1:30 remaining",
+            "Strategy 3 started | buy_threshold=$%.2f | skip_if_both>=$%.2f | at 1:00 remaining",
             BUY_THRESHOLD, SKIP_THRESHOLD,
         )
         while self._running:
@@ -145,7 +151,7 @@ class Strategy3:
                     if down_bid and down_bid > tracker.down_high:
                         tracker.down_high = down_bid
 
-            # Decision time: 1:30 remaining
+            # Decision time: 1:00 remaining
             elif remaining <= ANALYSIS_END and not tracker.decision_made:
                 tracker.decision_made = True
                 self._decided_cids.add(cid)
@@ -212,13 +218,29 @@ class Strategy3:
                 self.stats.trades += 1
                 self.stats.last_action = f"BUY {buy_side} @ ${ask:.3f} | {mkt.question[:30]}"
                 log.info(
-                    "[S3] BUY %s %.1f shares @ $%.3f ($%.2f) | 1:30 left | %s",
+                    "[S3] BUY %s %.1f shares @ $%.3f ($%.2f) | 1:00 left | %s",
                     buy_side, qty, ask, USDC_PER_TRADE, mkt.question[:45],
                 )
 
         # Check positions for resolution
         await self._check_positions()
         self._hourly_report()
+
+    async def _s3_sell(self, pos: S3Position) -> bool:
+        """Sell an S3 position via Polymarket client. Updates pos.exit_price, pos.pnl, pos.status."""
+        p = Position(
+            market=pos.market, side=pos.side, token_id=pos.token_id,
+            qty=pos.qty, avg_entry=pos.entry_price,
+        )
+        sold = await self.poly.sell(p)
+        if sold:
+            pos.exit_price = p.exit_price
+            pos.pnl = p.pnl
+            pos.status = "resolved"
+            self.stats.total_pnl += pos.pnl or 0
+            self._record_hourly_pnl(pos.pnl or 0)
+            self._closed.append(pos)
+        return sold
 
     async def _discover(self):
         markets = await self.poly.find_active_btc_5min_markets()
@@ -238,7 +260,41 @@ class Strategy3:
         for pos in self._positions:
             if pos.status != "open":
                 continue
-            if not pos.market.window_end or now <= pos.market.window_end:
+
+            mkt = pos.market
+            # ----- Manipulation: detect, then hard sell at 30c or below (while window open) -----
+            if mkt.window_end and now < mkt.window_end and self.feed and getattr(self.feed, "current_price", None):
+                btc = self.feed.current_price
+                strike = mkt.reference_price
+                if strike is not None:
+                    up_bid = await self.poly._get_best_bid(mkt.yes_token_id)
+                    down_bid = await self.poly._get_best_bid(mkt.no_token_id)
+                    up_bid = up_bid or 0
+                    down_bid = down_bid or 0
+                    # Detect: market favors Up (60c+) but BTC below strike → we're long Up on wrong side
+                    if not pos.manipulation_detected and up_bid >= MANIPULATION_FAVOR_CENTS and btc < strike and pos.side == "Up":
+                        pos.manipulation_detected = True
+                        self.stats.last_action = f"S3 MANIPULATION DETECTED {pos.side} (Up {up_bid:.2f}c but BTC < strike) — hard sell at 30c"
+                        log.info("[S3] MANIPULATION DETECTED: Up favored at %.2fc but BTC $%.0f < strike $%.0f → will hard sell at 30c",
+                                 up_bid * 100, btc, strike)
+                    # Detect: market favors Down (60c+) but BTC above strike → we're long Down on wrong side
+                    elif not pos.manipulation_detected and down_bid >= MANIPULATION_FAVOR_CENTS and btc > strike and pos.side == "Down":
+                        pos.manipulation_detected = True
+                        self.stats.last_action = f"S3 MANIPULATION DETECTED {pos.side} (Down {down_bid:.2f}c but BTC > strike) — hard sell at 30c"
+                        log.info("[S3] MANIPULATION DETECTED: Down favored at %.2fc but BTC $%.0f > strike $%.0f → will hard sell at 30c",
+                                 down_bid * 100, btc, strike)
+                    # Hard sell: if manipulation detected and our side is at 30c or less, sell
+                    if pos.manipulation_detected:
+                        our_bid = up_bid if pos.side == "Up" else down_bid
+                        if our_bid is not None and our_bid <= MANIPULATION_HARD_SELL_CENTS:
+                            sold = await self._s3_sell(pos)
+                            if sold:
+                                self.stats.losses += 1
+                                self.stats.last_action = f"S3 MANIPULATION HARD SELL {pos.side} @ {our_bid*100:.0f}c"
+                                log.info("[S3] MANIPULATION HARD SELL: %s @ %.0fc (was 30c or below)", pos.side, our_bid * 100)
+                                continue
+
+            if not mkt.window_end or now <= mkt.window_end:
                 continue
 
             # Window ended — resolve

@@ -62,9 +62,9 @@ async def main(headless: bool = False):
     from bot.strategy2 import Strategy2
     strat2 = Strategy2(poly)
 
-    # Strategy 3: late momentum — buy the leader at 1:30 remaining
+    # Strategy 3: late momentum — buy the leader at 1:00 remaining
     from bot.strategy3 import Strategy3
-    strat3 = Strategy3(poly)
+    strat3 = Strategy3(poly, feed)
 
     # --- Graceful shutdown ---
     shutdown_event = asyncio.Event()

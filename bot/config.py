@@ -34,8 +34,8 @@ class Config:
     # In protection mode, sell at this % (accept small loss to avoid big one)
     protection_exit_pct: float = float(os.getenv("PROTECTION_EXIT_PCT", "-10.0"))
 
-    # Hard stop loss -- if position hits this, sell IMMEDIATELY no exceptions
-    hard_stop_pct: float = float(os.getenv("HARD_STOP_PCT", "-25.0"))
+    # Hard stop loss -- if position hits this, sell IMMEDIATELY no exceptions (S1: -50% to avoid liquidation)
+    hard_stop_pct: float = float(os.getenv("HARD_STOP_PCT", "-50.0"))
 
     # Maximum USDC to risk per 5-minute window
     max_position_usdc: float = float(os.getenv("MAX_POSITION_USDC", "50.0"))

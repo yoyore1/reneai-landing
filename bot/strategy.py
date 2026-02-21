@@ -221,8 +221,12 @@ class Strategy:
             should_sell = False
             sell_reason = ""
 
+            # Hard stop: if loss hits -50%, sell immediately (never get liquidated)
+            if gain_pct <= cfg.hard_stop_pct:
+                should_sell = True
+                sell_reason = f"HARD STOP {gain_pct:.1f}%"
             # Hard cap: if gain hits 20%, sell no matter what
-            if gain_pct >= 20.0:
+            elif gain_pct >= 20.0:
                 should_sell = True
                 sell_reason = f"HARD CAP +{gain_pct:.1f}%"
             elif pos.moonbag_mode:
