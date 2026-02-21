@@ -36,6 +36,9 @@ SKIP_NO_LEADER_AT = 60.0   # at 1:00 remaining: if neither side 70c+, don't buy 
 USDC_PER_TRADE = 50.0
 MANIPULATION_FAVOR_CENTS = 0.60   # detect manipulation: one side 60c+ but BTC on opposite side of strike
 MANIPULATION_HARD_SELL_CENTS = 0.30  # when manipulation detected, hard sell if our side drops to 30c or less
+S3_HARD_STOP_CENTS = 0.30   # for ALL S3 positions: if our side goes to 30c or below, sell immediately (avoid liquidation)
+S3_SELL_AT_CENTS = 0.97     # take profit: sell when our side reaches 97c or above
+S3_MAX_BUY_CENTS = 0.94     # don't buy if ask is above 94c
 
 
 @dataclass
@@ -208,13 +211,16 @@ class Strategy3:
                     buy_token = mkt.no_token_id
 
                 if buy_side is not None:
-                    # Buy now (at 2 min or less; could be 1:45, 1:30, etc.)
-                    tracker.decision_made = True
-                    self._decided_cids.add(cid)
-                    self.stats.markets_analyzed += 1
                     ask = mkt.yes_ask if buy_side == "Up" else mkt.no_ask
                     if ask <= 0 or ask >= 1.0:
                         ask = buy_price
+                    # Don't buy above 94c
+                    if ask > S3_MAX_BUY_CENTS:
+                        continue  # wait for better price or skip
+                    # Buy now (at 2 min or less; ask <= 94c)
+                    tracker.decision_made = True
+                    self._decided_cids.add(cid)
+                    self.stats.markets_analyzed += 1
                     qty = math.floor((USDC_PER_TRADE / ask) * 100) / 100
                     pos = S3Position(
                         market=mkt, side=buy_side, token_id=buy_token,
@@ -270,6 +276,25 @@ class Strategy3:
                 continue
 
             mkt = pos.market
+            # ----- While window open: hard stop 30c, take profit 97c -----
+            if mkt.window_end and now < mkt.window_end:
+                our_bid = await self.poly._get_best_bid(pos.token_id)
+                if our_bid is not None:
+                    if our_bid <= S3_HARD_STOP_CENTS:
+                        sold = await self._s3_sell(pos)
+                        if sold:
+                            self.stats.losses += 1
+                            self.stats.last_action = f"S3 HARD STOP {pos.side} @ {our_bid*100:.0f}c"
+                            log.info("[S3] HARD STOP: %s @ %.0fc (sell to avoid liquidation)", pos.side, our_bid * 100)
+                            continue
+                    elif our_bid >= S3_SELL_AT_CENTS:
+                        sold = await self._s3_sell(pos)
+                        if sold:
+                            self.stats.wins += 1
+                            self.stats.last_action = f"S3 SELL {pos.side} @ {our_bid*100:.0f}c (take profit)"
+                            log.info("[S3] SELL %s @ %.0fc (take profit at 97c+)", pos.side, our_bid * 100)
+                            continue
+
             # ----- Manipulation: detect, then hard sell at 30c or below (while window open) -----
             if mkt.window_end and now < mkt.window_end and self.feed and getattr(self.feed, "current_price", None):
                 btc = self.feed.current_price
