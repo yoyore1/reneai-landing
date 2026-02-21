@@ -157,8 +157,13 @@ class Strategy:
                     side, ws.market.question[:50],
                 )
 
-                # Execute the buy IMMEDIATELY
+                # Execute the buy IMMEDIATELY (only if ask >= 20c)
                 await self.poly.get_market_prices(ws.market)
+                ask = ws.market.yes_ask if side == "YES" else ws.market.no_ask
+                if ask < cfg.s1_min_buy_cents:
+                    log.info("S1: Skipping buy — %s ask %.2fc < min %.2fc", side, ask * 100, cfg.s1_min_buy_cents * 100)
+                    ws.signal_fired = True  # still mark so we don't retry this window
+                    continue
                 position = await self.poly.buy(ws.market, side, cfg.max_position_usdc)
                 if position.filled:
                     ws.position = position

@@ -40,6 +40,9 @@ class Config:
     # Maximum USDC to risk per 5-minute window
     max_position_usdc: float = float(os.getenv("MAX_POSITION_USDC", "50.0"))
 
+    # S1: don't buy if ask is below this (e.g. 20c — avoid junk odds)
+    s1_min_buy_cents: float = float(os.getenv("S1_MIN_BUY_CENTS", "0.20"))
+
     # How often (seconds) to poll / check for spike + exit conditions
     poll_interval_sec: float = float(os.getenv("POLL_INTERVAL_SEC", "0.5"))
 
