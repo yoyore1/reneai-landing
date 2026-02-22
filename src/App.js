@@ -166,7 +166,7 @@ function App() {
 
       {/* ── Content ── */}
       <main className="content">
-        {tab === "calendar" && <CalendarTab calendar={calendar} />}
+        {tab === "calendar" && <CalendarTab />}
         {tab !== "calendar" && strat === "s1" && <>
           {tab === "dash" && <DashTab stats={stats} windows={windows} positions={positions} priceHistory={price_history} config={config} />}
           {tab === "windows" && <WindowsTab windows={windows} />}
@@ -201,25 +201,31 @@ function App() {
 }
 
 /* ━━━━━━━━━━━━━━━━━━━ CALENDAR TAB ━━━━━━━━━━━━━━━━━━━ */
-function CalendarTab({ calendar }) {
-  if (!calendar || !calendar.length) {
-    return (
-      <div className="tab-content">
-        <h3 className="section-title">📅 Daily calendar (EST)</h3>
-        <div className="empty-card">Calendar loading…</div>
-      </div>
-    );
+function getCalendarDataEST(days = 7) {
+  const tz = "America/New_York";
+  const hours = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, "0")}:00`);
+  const out = [];
+  for (let d = 0; d < days; d++) {
+    const dte = new Date();
+    dte.setDate(dte.getDate() - d);
+    const dateStr = dte.toLocaleDateString("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).replace(/\//g, "-");
+    out.push({ date: dateStr, hours });
   }
+  return out;
+}
+
+function CalendarTab() {
+  const calendar = useMemo(() => getCalendarDataEST(7), []);
   return (
     <div className="tab-content">
-      <h3 className="section-title">📅 Daily calendar (EST) — days with hours</h3>
-      <p className="calendar-sub">Each day with all 24 hours in Eastern time.</p>
+      <h3 className="section-title">📅 Daily calendar (EST)</h3>
+      <p className="calendar-sub">Each day with all 24 hours (Eastern time).</p>
       <div className="calendar-list">
         {calendar.map((day, i) => (
           <div key={day.date} className="calendar-day">
             <div className="calendar-date">{day.date}{i === 0 ? " (today)" : ""}</div>
             <div className="calendar-hours">
-              {(day.hours || []).map((h) => (
+              {day.hours.map((h) => (
                 <span key={h} className="calendar-hour">{h}</span>
               ))}
             </div>
