@@ -22,9 +22,20 @@ import signal
 import sys
 
 from bot.config import cfg
+from bot.time_util import datetime_est, write_daily_calendar
 from bot.binance_feed import BinanceFeed
 from bot.polymarket import PolymarketClient
 from bot.strategy import Strategy
+
+
+class ESTFormatter(logging.Formatter):
+    """Format log timestamps in EST."""
+
+    def formatTime(self, record, datefmt=None):
+        dt = datetime_est(record.created)
+        if datefmt:
+            return dt.strftime(datefmt)
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def setup_logging(headless: bool):
@@ -33,9 +44,10 @@ def setup_logging(headless: bool):
     if headless:
         logging.basicConfig(level=level, format=fmt, stream=sys.stdout)
     else:
-        # When the dashboard is active, log to file so it doesn't mess up the TUI
         logging.basicConfig(level=level, format=fmt, filename="bot.log", filemode="a")
-    # Suppress noisy libraries
+    # All times in EST
+    for h in logging.root.handlers:
+        h.setFormatter(ESTFormatter(fmt))
     logging.getLogger("websockets").setLevel(logging.WARNING)
     logging.getLogger("aiohttp").setLevel(logging.WARNING)
 
@@ -43,6 +55,9 @@ def setup_logging(headless: bool):
 async def main(headless: bool = False):
     setup_logging(headless)
     log = logging.getLogger("main")
+
+    write_daily_calendar("daily_calendar_EST.txt", days=7)
+    log.info("Daily calendar (EST) written to daily_calendar_EST.txt")
 
     log.info("=" * 60)
     log.info("Binance-Polymarket Arbitrage Bot starting")

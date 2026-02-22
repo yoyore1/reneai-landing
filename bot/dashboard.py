@@ -7,8 +7,7 @@ and cumulative P&L in a clean, auto-refreshing table.
 
 import asyncio
 import time
-from datetime import datetime, timezone
-
+from bot.time_util import format_time_est
 from rich.console import Console
 from rich.layout import Layout
 from rich.live import Live
@@ -23,9 +22,7 @@ from bot.config import cfg
 
 
 def _ts(epoch: float) -> str:
-    if epoch <= 0:
-        return "--"
-    return datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("%H:%M:%S")
+    return format_time_est(epoch)
 
 
 def build_dashboard(feed: BinanceFeed, strat: Strategy) -> Layout:

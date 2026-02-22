@@ -26,7 +26,9 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
+
+from bot.time_util import date_key_est, hour_key_est
 from typing import Optional, List, Dict
 
 from bot.config import cfg
@@ -289,17 +291,17 @@ class Strategy:
         self._open_positions = still_open
 
     def _record_hourly_pnl(self, pnl: float):
-        hour_key = datetime.now(timezone.utc).strftime("%H:00")
+        hour_key = hour_key_est()
         self.stats.hourly_pnl[hour_key] = self.stats.hourly_pnl.get(hour_key, 0) + pnl
 
     def _check_daily_reset(self):
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today = date_key_est()
         if not hasattr(self, "_last_day") or self._last_day != today:
             if hasattr(self, "_last_day") and self._last_day:
                 log.info("═══ S1 NEW DAY — resetting hourly P&L ═══")
             self.stats.hourly_pnl = {}
             self._last_day = today
-        # Make sure current hour exists
-        hour_key = datetime.now(timezone.utc).strftime("%H:00")
+        # Make sure current hour exists (EST)
+        hour_key = hour_key_est()
         if hour_key not in self.stats.hourly_pnl:
             self.stats.hourly_pnl[hour_key] = 0.0

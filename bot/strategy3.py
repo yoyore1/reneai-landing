@@ -21,7 +21,9 @@ import logging
 import math
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
+
+from bot.time_util import date_key_est, hour_key_est
 from typing import Optional, List, Dict, Set
 
 from bot.polymarket import PolymarketClient, Market, Position
@@ -228,12 +230,12 @@ class Strategy3:
                         entry_time=time.time(),
                     )
                     self._positions.append(pos)
-                    self.stats.trades += 1
-                    self.stats.last_action = f"BUY {buy_side} @ ${ask:.3f} | {mkt.question[:30]}"
-                    log.info(
-                        "[S3] BUY %s %.1f shares @ $%.3f ($%.2f) | %.0fs left | %s",
-                        buy_side, qty, ask, USDC_PER_TRADE, remaining, mkt.question[:45],
-                    )
+                self.stats.trades += 1
+                self.stats.last_action = f"BUY {buy_side} @ ${ask:.3f} | {mkt.question[:30]}"
+                log.info(
+                    "[S3] BUY %s %.1f shares @ $%.3f ($%.2f) | %.0fs left | %s",
+                    buy_side, qty, ask, USDC_PER_TRADE, remaining, mkt.question[:45],
+                )
                 # else: no side 70c+ yet, keep waiting (don't set decision_made)
 
         # Check positions for resolution
@@ -352,13 +354,12 @@ class Strategy3:
             )
 
     def _record_hourly_pnl(self, pnl: float):
-        hour_key = datetime.now(timezone.utc).strftime("%H:00")
+        hour_key = hour_key_est()
         self.stats.hourly_pnl[hour_key] = self.stats.hourly_pnl.get(hour_key, 0) + pnl
 
     def _hourly_report(self):
-        now = datetime.now(timezone.utc)
-        hour_key = now.strftime("%H:00")
-        today = now.strftime("%Y-%m-%d")
+        hour_key = hour_key_est()
+        today = date_key_est()
 
         if self._last_day != today:
             if self._last_day:

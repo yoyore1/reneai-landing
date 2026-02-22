@@ -11,7 +11,9 @@ import logging
 import math
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
+
+from bot.time_util import date_key_est, hour_key_est
 from typing import Optional, List, Dict, Set
 
 from bot.polymarket import PolymarketClient, Market
@@ -123,11 +125,17 @@ class Strategy4:
                 "[S4] BUY YES @ $%.3f (%.2f shares) = $%.2f  |  BUY NO @ $%.3f (%.2f shares) = $%.2f  |  Total spend $%.2f → receive $%.2f at resolution",
                 yes_ask, qty, spent_yes, no_ask, qty, spent_no, spent_yes + spent_no, qty * 1.0,
             )
+            log.info("[S4] Leg 1: sending BUY YES order now...")
             pos_yes = await self.poly.buy(mkt, "YES", spent_yes)
+            log.info("[S4] Leg 1 YES filled=%s qty=%s | Leg 2: sending BUY NO order now...", pos_yes.filled, pos_yes.qty)
             pos_no = await self.poly.buy(mkt, "NO", spent_no)
+            log.info("[S4] Leg 2 NO filled=%s qty=%s", pos_no.filled, pos_no.qty)
             if not pos_yes.filled or not pos_no.filled:
                 self.stats.last_action = "S4 BUY FAILED (one or both legs)"
-                log.warning("[S4] One or both legs did not fill for %s", mkt.question[:40])
+                log.warning(
+                    "[S4] One or both legs did not fill! YES filled=%s NO filled=%s — you may have only one side in the market. Check Polymarket. %s",
+                    pos_yes.filled, pos_no.filled, mkt.question[:40],
+                )
                 continue
 
             # Use actual filled qty (in case of partial fill use the smaller)
@@ -222,13 +230,12 @@ class Strategy4:
         self._positions = still_open
 
     def _record_hourly_pnl(self, pnl: float):
-        hour_key = datetime.now(timezone.utc).strftime("%H:00")
+        hour_key = hour_key_est()
         self.stats.hourly_pnl[hour_key] = self.stats.hourly_pnl.get(hour_key, 0) + pnl
 
     def _hourly_report(self):
-        now = datetime.now(timezone.utc)
-        hour_key = now.strftime("%H:00")
-        today = now.strftime("%Y-%m-%d")
+        hour_key = hour_key_est()
+        today = date_key_est()
         if self._last_day != today:
             if self._last_day:
                 log.info("═══ S4 NEW DAY — resetting hourly P&L ═══")
