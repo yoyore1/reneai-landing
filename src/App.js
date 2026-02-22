@@ -166,7 +166,7 @@ function App() {
 
       {/* ── Content ── */}
       <main className="content">
-        {tab === "calendar" && <CalendarTab />}
+        {tab === "calendar" && <CalendarTab hourlyPnl={strat === "s1" ? (stats.hourly_pnl || {}) : strat === "s2" ? (s2?.stats?.hourly_pnl || {}) : (s3?.stats?.hourly_pnl || {})} />}
         {tab !== "calendar" && strat === "s1" && <>
           {tab === "dash" && <DashTab stats={stats} windows={windows} positions={positions} priceHistory={price_history} config={config} />}
           {tab === "windows" && <WindowsTab windows={windows} />}
@@ -214,20 +214,28 @@ function getCalendarDataEST(days = 7) {
   return out;
 }
 
-function CalendarTab() {
+function CalendarTab({ hourlyPnl }) {
   const calendar = useMemo(() => getCalendarDataEST(7), []);
+  const pnlMap = hourlyPnl || {};
   return (
     <div className="tab-content">
       <h3 className="section-title">📅 Daily calendar (EST)</h3>
-      <p className="calendar-sub">Each day with all 24 hours (Eastern time).</p>
+      <p className="calendar-sub">Each day with all 24 hours. P&L shown for today (updates live).</p>
       <div className="calendar-list">
         {calendar.map((day, i) => (
           <div key={day.date} className="calendar-day">
             <div className="calendar-date">{day.date}{i === 0 ? " (today)" : ""}</div>
             <div className="calendar-hours">
-              {day.hours.map((h) => (
-                <span key={h} className="calendar-hour">{h}</span>
-              ))}
+              {day.hours.map((h) => {
+                const pnl = i === 0 ? pnlMap[h] : undefined;
+                const hasPnl = pnl !== undefined && pnl !== null;
+                return (
+                  <span key={h} className={`calendar-hour ${hasPnl ? (pnl >= 0 ? "calendar-pnl-win" : "calendar-pnl-loss") : ""}`}>
+                    <span className="calendar-hour-label">{h}</span>
+                    {hasPnl && <span className="calendar-hour-pnl">{pnl >= 0 ? "+" : ""}{fPnl(pnl)}</span>}
+                  </span>
+                );
+              })}
             </div>
           </div>
         ))}

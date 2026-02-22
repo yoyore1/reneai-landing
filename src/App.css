@@ -91,8 +91,13 @@ body {
 .calendar-hours { display:flex; flex-wrap:wrap; gap:0.25rem; }
 .calendar-hour {
   font-size:0.6rem; color:var(--dim2); font-variant-numeric:tabular-nums;
-  padding:0.15rem 0.35rem; background:var(--bg3); border-radius:6px;
+  padding:0.2rem 0.35rem; background:var(--bg3); border-radius:6px;
+  display:inline-flex; flex-direction:column; align-items:center; gap:0.05rem;
 }
+.calendar-hour-label { color:var(--dim2); }
+.calendar-hour-pnl { font-size:0.55rem; font-weight:700; }
+.calendar-hour.calendar-pnl-win .calendar-hour-pnl { color:var(--green); }
+.calendar-hour.calendar-pnl-loss .calendar-hour-pnl { color:var(--red); }
 
 /* ─── Section Titles ─── */
 .section-title {
