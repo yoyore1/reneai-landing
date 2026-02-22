@@ -130,7 +130,7 @@ function App() {
     );
   }
 
-  const { btc_price, btc_live, stats, windows, positions, closed, config, uptime, price_history, events, s2, s3 } = state;
+  const { btc_price, btc_live, stats, windows, positions, closed, config, uptime, price_history, events, s2, s3, s4, calendar } = state;
   const activePnl = strat === "s1" ? stats.pnl : strat === "s2" ? (s2?.stats?.pnl || 0) : (s3?.stats?.pnl || 0);
 
   return (
@@ -166,18 +166,19 @@ function App() {
 
       {/* ── Content ── */}
       <main className="content">
-        {strat === "s1" && <>
+        {tab === "calendar" && <CalendarTab calendar={calendar} />}
+        {tab !== "calendar" && strat === "s1" && <>
           {tab === "dash" && <DashTab stats={stats} windows={windows} positions={positions} priceHistory={price_history} config={config} />}
           {tab === "windows" && <WindowsTab windows={windows} />}
           {tab === "history" && <HistoryTab closed={closed} stats={stats} />}
           {tab === "settings" && <SettingsTab config={config} events={events} uptime={uptime} stats={stats} />}
         </>}
-        {strat === "s2" && <>
+        {tab !== "calendar" && strat === "s2" && <>
           {tab === "dash" && <S2DashTab s2={s2} />}
           {tab === "history" && <S2HistoryTab s2={s2} />}
           {tab === "settings" && <SettingsTab config={config} events={events} uptime={uptime} stats={stats} />}
         </>}
-        {strat === "s3" && <>
+        {tab !== "calendar" && strat === "s3" && <>
           {tab === "dash" && <S3DashTab s3={s3} />}
           {tab === "history" && <S3HistoryTab s3={s3} />}
           {tab === "settings" && <SettingsTab config={config} events={events} uptime={uptime} stats={stats} />}
@@ -187,14 +188,44 @@ function App() {
       {/* ── Bottom Nav ── */}
       <nav className="bottomnav">
         {(strat === "s1"
-          ? [["dash", IC.dash, "Dashboard"], ["windows", IC.chart, "Windows"], ["history", IC.list, "History"], ["settings", IC.gear, "Settings"]]
-          : [["dash", IC.dash, "Dashboard"], ["history", IC.list, "History"], ["settings", IC.gear, "Settings"]]
+          ? [["dash", IC.dash, "Dashboard"], ["windows", IC.chart, "Windows"], ["history", IC.list, "History"], ["calendar", "📅", "Calendar"], ["settings", IC.gear, "Settings"]]
+          : [["dash", IC.dash, "Dashboard"], ["history", IC.list, "History"], ["calendar", "📅", "Calendar"], ["settings", IC.gear, "Settings"]]
         ).map(([id, icon, label]) => (
           <button key={id} className={`nav-btn ${tab === id ? "nav-active" : ""}`} onClick={() => setTab(id)}>
-            {icon}<span>{label}</span>
+            {typeof icon === "string" ? <span className="nav-emoji">{icon}</span> : icon}<span>{label}</span>
           </button>
         ))}
       </nav>
+    </div>
+  );
+}
+
+/* ━━━━━━━━━━━━━━━━━━━ CALENDAR TAB ━━━━━━━━━━━━━━━━━━━ */
+function CalendarTab({ calendar }) {
+  if (!calendar || !calendar.length) {
+    return (
+      <div className="tab-content">
+        <h3 className="section-title">📅 Daily calendar (EST)</h3>
+        <div className="empty-card">Calendar loading…</div>
+      </div>
+    );
+  }
+  return (
+    <div className="tab-content">
+      <h3 className="section-title">📅 Daily calendar (EST) — days with hours</h3>
+      <p className="calendar-sub">Each day with all 24 hours in Eastern time.</p>
+      <div className="calendar-list">
+        {calendar.map((day, i) => (
+          <div key={day.date} className="calendar-day">
+            <div className="calendar-date">{day.date}{i === 0 ? " (today)" : ""}</div>
+            <div className="calendar-hours">
+              {(day.hours || []).map((h) => (
+                <span key={h} className="calendar-hour">{h}</span>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

@@ -48,6 +48,16 @@ def daily_calendar_lines(days: int = 7) -> list:
     return lines
 
 
+def daily_calendar_data(days: int = 7) -> list:
+    """Return calendar for API: list of { date, hours } in EST (newest first)."""
+    now = now_est()
+    hours_all = ["%02d:00" % h for h in range(24)]
+    return [
+        {"date": (now - timedelta(days=d)).strftime("%Y-%m-%d"), "hours": hours_all}
+        for d in range(days)
+    ]
+
+
 def write_daily_calendar(path: str = "daily_calendar_EST.txt", days: int = 7) -> None:
     """Write daily calendar (EST) to a file."""
     with open(path, "w", encoding="utf-8") as f:

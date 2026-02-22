@@ -18,6 +18,7 @@ from typing import Set
 from aiohttp import web
 
 from bot.config import cfg
+from bot.time_util import daily_calendar_data
 
 log = logging.getLogger("server")
 
@@ -185,6 +186,7 @@ class DashboardServer:
             "positions": positions,
             "closed": closed,
             "events": list(self._event_log),
+            "calendar": daily_calendar_data(7),
             "s2": self._build_s2_state(),
             "s3": self._build_s3_state(),
             "s4": self._build_s4_state(),
