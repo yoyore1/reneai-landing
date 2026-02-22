@@ -50,6 +50,6 @@ def daily_calendar_lines(days: int = 7) -> list:
 
 def write_daily_calendar(path: str = "daily_calendar_EST.txt", days: int = 7) -> None:
     """Write daily calendar (EST) to a file."""
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(daily_calendar_lines(days)))
         f.write("\n")
