@@ -38,7 +38,7 @@ def format_time_est(epoch: float) -> str:
 
 def daily_calendar_lines(days: int = 7) -> list:
     """Return list of lines for a daily calendar (EST): each day with 24 hours."""
-    lines = ["# Daily calendar (EST) — days with hours", ""]
+    lines = ["# 📅 Daily calendar (EST) — days with hours", ""]
     now = now_est()
     for d in range(days):
         dt = now - timedelta(days=d)

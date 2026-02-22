@@ -57,7 +57,7 @@ async def main(headless: bool = False):
     log = logging.getLogger("main")
 
     write_daily_calendar("daily_calendar_EST.txt", days=7)
-    log.info("Daily calendar (EST) written to daily_calendar_EST.txt")
+    log.info("📅 Daily calendar (EST) written to daily_calendar_EST.txt")
 
     log.info("=" * 60)
     log.info("Binance-Polymarket Arbitrage Bot starting")
