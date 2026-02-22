@@ -252,7 +252,7 @@ function DashTab({ stats, windows, positions, priceHistory, config }) {
       {/* Hourly P&L */}
       {stats.hourly_pnl && Object.keys(stats.hourly_pnl).length > 0 && (
         <>
-          <h3 className="section-title">Hourly P&L (resets daily)</h3>
+          <h3 className="section-title">📅 Hourly P&L (EST, resets daily)</h3>
           <div className="hourly-grid">
             {Object.entries(stats.hourly_pnl).sort(([a],[b]) => a.localeCompare(b)).map(([hour, pnl]) => (
               <div key={hour} className={`hourly-card ${pnl > 0 ? "hourly-win" : pnl < 0 ? "hourly-loss" : "hourly-flat"}`}>
@@ -500,7 +500,7 @@ function S3DashTab({ s3 }) {
 
       {st.hourly_pnl && Object.keys(st.hourly_pnl).length > 0 && (
         <>
-          <h3 className="section-title">Hourly P&L (resets daily)</h3>
+          <h3 className="section-title">📅 Hourly P&L (EST, resets daily)</h3>
           <div className="hourly-grid">
             {Object.entries(st.hourly_pnl).sort(([a],[b]) => a.localeCompare(b)).map(([hour, pnl]) => (
               <div key={hour} className={`hourly-card ${pnl > 0 ? "hourly-win" : pnl < 0 ? "hourly-loss" : "hourly-flat"}`}>
@@ -605,7 +605,7 @@ function S2DashTab({ s2 }) {
       {/* Hourly P&L */}
       {st.hourly_pnl && Object.keys(st.hourly_pnl).length > 0 && (
         <>
-          <h3 className="section-title">Hourly P&L (resets daily)</h3>
+          <h3 className="section-title">📅 Hourly P&L (EST, resets daily)</h3>
           <div className="hourly-grid">
             {Object.entries(st.hourly_pnl).sort(([a],[b]) => a.localeCompare(b)).map(([hour, pnl]) => (
               <div key={hour} className={`hourly-card ${pnl > 0 ? "hourly-win" : pnl < 0 ? "hourly-loss" : "hourly-flat"}`}>
