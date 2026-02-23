@@ -27,7 +27,6 @@ from bot.time_util import date_key_est, hour_key_est
 from typing import Optional, List, Dict, Set
 
 from bot.polymarket import PolymarketClient, Market, Position
-from bot.config import cfg
 
 log = logging.getLogger("strategy3")
 
@@ -56,7 +55,6 @@ class S3Stats:
     last_action: str = ""
     hourly_pnl: dict = field(default_factory=dict)
     last_hour_report: str = ""
-    daily_pnl: float = 0.0
 
 
 @dataclass
@@ -99,8 +97,6 @@ class Strategy3:
         self._running = False
         self._last_hour_key = ""
         self._last_day = ""
-        self._consecutive_losses = 0
-        self._pause_until = 0.0
 
     async def run(self):
         self._running = True
@@ -217,18 +213,6 @@ class Strategy3:
                     buy_token = mkt.no_token_id
 
                 if buy_side is not None:
-                    if cfg.daily_loss_limit_usdc < 0 and self.stats.daily_pnl <= cfg.daily_loss_limit_usdc:
-                        log.info("S3: Skipping buy — daily P&L $%.2f at or below limit $%.2f", self.stats.daily_pnl, cfg.daily_loss_limit_usdc)
-                        tracker.decision_made = True
-                        self._decided_cids.add(cid)
-                        self.stats.markets_analyzed += 1
-                        continue
-                    if now < self._pause_until:
-                        log.info("S3: Skipping buy — cooldown after %d consecutive losses (%.0f min left)", self._consecutive_losses, (self._pause_until - now) / 60)
-                        tracker.decision_made = True
-                        self._decided_cids.add(cid)
-                        self.stats.markets_analyzed += 1
-                        continue
                     ask = mkt.yes_ask if buy_side == "Up" else mkt.no_ask
                     if ask <= 0 or ask >= 1.0:
                         ask = buy_price
@@ -269,10 +253,8 @@ class Strategy3:
             pos.exit_price = p.exit_price
             pos.pnl = p.pnl
             pos.status = "resolved"
-            pnl_val = pos.pnl or 0
-            self.stats.total_pnl += pnl_val
-            self.stats.daily_pnl += pnl_val
-            self._record_hourly_pnl(pnl_val)
+            self.stats.total_pnl += pos.pnl or 0
+            self._record_hourly_pnl(pos.pnl or 0)
             self._closed.append(pos)
         return sold
 
@@ -296,31 +278,14 @@ class Strategy3:
                 continue
 
             mkt = pos.market
-            # ----- While window open: dollar loss cap, then hard stop 30c, take profit 97c -----
+            # ----- While window open: hard stop 30c, take profit 97c -----
             if mkt.window_end and now < mkt.window_end:
                 our_bid = await self.poly._get_best_bid(pos.token_id)
                 if our_bid is not None:
-                    if our_bid < pos.entry_price and cfg.max_loss_per_trade_usdc > 0:
-                        dollar_loss = (pos.entry_price - our_bid) * pos.qty
-                        if dollar_loss >= cfg.max_loss_per_trade_usdc:
-                            sold = await self._s3_sell(pos)
-                            if sold:
-                                self.stats.losses += 1
-                                self._consecutive_losses += 1
-                                if self._consecutive_losses >= cfg.consecutive_losses_to_pause:
-                                    self._pause_until = now + cfg.pause_minutes_after_streak * 60
-                                    log.info("[S3] %d consecutive losses → pause new buys for %.0f min", self._consecutive_losses, cfg.pause_minutes_after_streak)
-                                self.stats.last_action = f"S3 MAX $ LOSS ${dollar_loss:.2f}"
-                                log.info("[S3] MAX $ LOSS: %s @ %.0fc (loss $%.2f)", pos.side, our_bid * 100, dollar_loss)
-                                continue
                     if our_bid <= S3_HARD_STOP_CENTS:
                         sold = await self._s3_sell(pos)
                         if sold:
                             self.stats.losses += 1
-                            self._consecutive_losses += 1
-                            if self._consecutive_losses >= cfg.consecutive_losses_to_pause:
-                                self._pause_until = now + cfg.pause_minutes_after_streak * 60
-                                log.info("[S3] %d consecutive losses → pause new buys for %.0f min", self._consecutive_losses, cfg.pause_minutes_after_streak)
                             self.stats.last_action = f"S3 HARD STOP {pos.side} @ {our_bid*100:.0f}c"
                             log.info("[S3] HARD STOP: %s @ %.0fc (sell to avoid liquidation)", pos.side, our_bid * 100)
                             continue
@@ -328,7 +293,6 @@ class Strategy3:
                         sold = await self._s3_sell(pos)
                         if sold:
                             self.stats.wins += 1
-                            self._consecutive_losses = 0
                             self.stats.last_action = f"S3 SELL {pos.side} @ {our_bid*100:.0f}c (take profit)"
                             log.info("[S3] SELL %s @ %.0fc (take profit at 97c+)", pos.side, our_bid * 100)
                             continue
@@ -361,10 +325,6 @@ class Strategy3:
                             sold = await self._s3_sell(pos)
                             if sold:
                                 self.stats.losses += 1
-                                self._consecutive_losses += 1
-                                if self._consecutive_losses >= cfg.consecutive_losses_to_pause:
-                                    self._pause_until = now + cfg.pause_minutes_after_streak * 60
-                                    log.info("[S3] %d consecutive losses → pause new buys for %.0f min", self._consecutive_losses, cfg.pause_minutes_after_streak)
                                 self.stats.last_action = f"S3 MANIPULATION HARD SELL {pos.side} @ {our_bid*100:.0f}c"
                                 log.info("[S3] MANIPULATION HARD SELL: %s @ %.0fc (was 30c or below)", pos.side, our_bid * 100)
                                 continue
@@ -378,19 +338,13 @@ class Strategy3:
                 pos.exit_price = 1.0
                 pos.pnl = (1.0 - pos.entry_price) * pos.qty
                 self.stats.wins += 1
-                self._consecutive_losses = 0
             else:
                 pos.exit_price = 0.0
                 pos.pnl = -pos.spent
                 self.stats.losses += 1
-                self._consecutive_losses += 1
-                if self._consecutive_losses >= cfg.consecutive_losses_to_pause:
-                    self._pause_until = now + cfg.pause_minutes_after_streak * 60
-                    log.info("[S3] %d consecutive losses → pause new buys for %.0f min", self._consecutive_losses, cfg.pause_minutes_after_streak)
 
             pos.status = "resolved"
             self.stats.total_pnl += pos.pnl
-            self.stats.daily_pnl += pos.pnl
             self._record_hourly_pnl(pos.pnl)
             self.stats.last_action = f"RESOLVED {pos.side} ${pos.pnl:+.2f}"
             self._closed.append(pos)
@@ -409,9 +363,8 @@ class Strategy3:
 
         if self._last_day != today:
             if self._last_day:
-                log.info("═══ S3 NEW DAY — resetting hourly P&L and daily P&L ═══")
+                log.info("═══ S3 NEW DAY — resetting hourly P&L ═══")
             self.stats.hourly_pnl = {}
-            self.stats.daily_pnl = 0.0
             self._last_day = today
 
         if hour_key != self._last_hour_key and self._last_hour_key:
