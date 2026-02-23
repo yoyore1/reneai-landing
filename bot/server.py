@@ -165,6 +165,7 @@ class DashboardServer:
                 "protection_exit": cfg.protection_exit_pct,
                 "hard_stop": cfg.hard_stop_pct,
                 "max_position": cfg.max_position_usdc,
+                "daily_loss_limit": cfg.daily_loss_limit_usdc,
                 "dry_run": cfg.dry_run,
             },
             "stats": {

@@ -62,6 +62,7 @@ class StrategyStats:
     last_action: str = ""
     hourly_pnl: dict = field(default_factory=dict)
     last_hour_report: str = ""
+    daily_pnl: float = 0.0  # resets at midnight EST; used for daily loss limit
 
 
 class Strategy:
@@ -82,6 +83,8 @@ class Strategy:
         self._closed_positions: List[Position] = []
 
         self._running = False
+        self._consecutive_losses = 0
+        self._pause_until = 0.0  # no new buys until this timestamp (after loss streak)
 
     # ------------------------------------------------------------------
     # Main loop
@@ -166,6 +169,14 @@ class Strategy:
                     log.info("S1: Skipping buy — %s ask %.2fc < min %.2fc", side, ask * 100, cfg.s1_min_buy_cents * 100)
                     ws.signal_fired = True  # still mark so we don't retry this window
                     continue
+                if cfg.daily_loss_limit_usdc < 0 and self.stats.daily_pnl <= cfg.daily_loss_limit_usdc:
+                    log.info("S1: Skipping buy — daily P&L $%.2f at or below limit $%.2f", self.stats.daily_pnl, cfg.daily_loss_limit_usdc)
+                    ws.signal_fired = True
+                    continue
+                if time.time() < getattr(self, '_pause_until', 0):
+                    log.info("S1: Skipping buy — cooldown after %d consecutive losses (%.0f min)", self._consecutive_losses, cfg.pause_minutes_after_streak)
+                    ws.signal_fired = True
+                    continue
                 position = await self.poly.buy(ws.market, side, cfg.max_position_usdc)
                 if position.filled:
                     ws.position = position
@@ -228,8 +239,14 @@ class Strategy:
             should_sell = False
             sell_reason = ""
 
+            # Dollar loss cap: exit once this trade's loss in $ hits limit (stops one position blowing up)
+            if bid < pos.avg_entry and cfg.max_loss_per_trade_usdc > 0:
+                dollar_loss = (pos.avg_entry - bid) * pos.qty
+                if dollar_loss >= cfg.max_loss_per_trade_usdc:
+                    should_sell = True
+                    sell_reason = f"MAX $ LOSS ${dollar_loss:.2f}"
             # Hard stop: if loss hits -50%, sell immediately (never get liquidated)
-            if gain_pct <= cfg.hard_stop_pct:
+            if not should_sell and gain_pct <= cfg.hard_stop_pct:
                 should_sell = True
                 sell_reason = f"HARD STOP {gain_pct:.1f}%"
             # Hard cap: if gain hits 20%, sell no matter what
@@ -258,12 +275,19 @@ class Strategy:
                 sold = await self.poly.sell(pos)
                 if sold:
                     self.stats.total_exits += 1
-                    self.stats.total_pnl += pos.pnl or 0
-                    self._record_hourly_pnl(pos.pnl or 0)
+                    pnl_val = pos.pnl or 0
+                    self.stats.total_pnl += pnl_val
+                    self.stats.daily_pnl += pnl_val
+                    self._record_hourly_pnl(pnl_val)
                     if (pos.pnl or 0) >= 0:
                         self.stats.wins += 1
+                        self._consecutive_losses = 0
                     else:
                         self.stats.losses += 1
+                        self._consecutive_losses = getattr(self, '_consecutive_losses', 0) + 1
+                        if self._consecutive_losses >= cfg.consecutive_losses_to_pause:
+                            self._pause_until = time.time() + cfg.pause_minutes_after_streak * 60
+                            log.info("S1: %d consecutive losses → pause new buys for %.0f min", self._consecutive_losses, cfg.pause_minutes_after_streak)
                     self.stats.last_action = f"SELL {pos.side} [{sell_reason}]"
                     self._closed_positions.append(pos)
                 else:
@@ -278,11 +302,17 @@ class Strategy:
                 pos.pnl = (bid - pos.avg_entry) * pos.qty
                 self.stats.total_exits += 1
                 self.stats.total_pnl += pos.pnl
+                self.stats.daily_pnl += pos.pnl
                 self._record_hourly_pnl(pos.pnl)
                 if pos.pnl >= 0:
                     self.stats.wins += 1
+                    self._consecutive_losses = 0
                 else:
                     self.stats.losses += 1
+                    self._consecutive_losses = getattr(self, '_consecutive_losses', 0) + 1
+                    if self._consecutive_losses >= cfg.consecutive_losses_to_pause:
+                        self._pause_until = time.time() + cfg.pause_minutes_after_streak * 60
+                        log.info("S1: %d consecutive losses → pause new buys for %.0f min", self._consecutive_losses, cfg.pause_minutes_after_streak)
                 self.stats.last_action = f"SETTLED {pos.side} PnL=${pos.pnl:.2f}"
                 self._closed_positions.append(pos)
             else:
@@ -298,8 +328,9 @@ class Strategy:
         today = date_key_est()
         if not hasattr(self, "_last_day") or self._last_day != today:
             if hasattr(self, "_last_day") and self._last_day:
-                log.info("═══ S1 NEW DAY — resetting hourly P&L ═══")
+                log.info("═══ S1 NEW DAY — resetting hourly P&L and daily P&L ═══")
             self.stats.hourly_pnl = {}
+            self.stats.daily_pnl = 0.0
             self._last_day = today
         # Make sure current hour exists (EST)
         hour_key = hour_key_est()

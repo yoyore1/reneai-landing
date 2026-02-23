@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useRef, useMemo } from "react";
 import "./App.css";
 
-const WS_URL = `ws://${window.location.hostname}:8899/ws`;
+// Same host as the page so it works on localhost and via tunnel (https → wss)
+const WS_URL = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws`;
 
 /* ═══ Formatters ═══ */
 const fP = (p) => p == null ? "—" : "$" + Number(p).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });

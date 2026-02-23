@@ -17,6 +17,7 @@ from bot.time_util import date_key_est, hour_key_est
 from typing import Optional, List, Dict, Set
 
 from bot.polymarket import PolymarketClient, Market
+from bot.config import cfg
 
 log = logging.getLogger("strategy4")
 
@@ -35,6 +36,7 @@ class S4Stats:
     losses: int = 0
     last_action: str = ""
     hourly_pnl: dict = field(default_factory=dict)
+    daily_pnl: float = 0.0
 
 
 @dataclass
@@ -110,6 +112,9 @@ class Strategy4:
             if total_ask >= ARB_MAX_SUM:
                 self.stats.skipped_no_edge += 1
                 self.stats.last_action = f"S4 SKIP (yes+no=%.2f >= %.2f)" % (total_ask, ARB_MAX_SUM)
+                continue
+            if cfg.daily_loss_limit_usdc < 0 and self.stats.daily_pnl <= cfg.daily_loss_limit_usdc:
+                log.info("S4: Skipping buy — daily P&L $%.2f at or below limit $%.2f", self.stats.daily_pnl, cfg.daily_loss_limit_usdc)
                 continue
 
             # Edge: 1 - total_ask profit per share. Buy equal shares of both.
@@ -216,6 +221,7 @@ class Strategy4:
                 resolution_msg = "Resolved (winner unknown — no price feed)"
 
             self.stats.total_pnl += arb.pnl
+            self.stats.daily_pnl += arb.pnl
             self.stats.wins += 1
             self._record_hourly_pnl(arb.pnl)
             self._closed.append(arb)
@@ -238,8 +244,9 @@ class Strategy4:
         today = date_key_est()
         if self._last_day != today:
             if self._last_day:
-                log.info("═══ S4 NEW DAY — resetting hourly P&L ═══")
+                log.info("═══ S4 NEW DAY — resetting hourly P&L and daily P&L ═══")
             self.stats.hourly_pnl = {}
+            self.stats.daily_pnl = 0.0
             self._last_day = today
         if hour_key != self._last_hour_key and self._last_hour_key:
             prev = self.stats.hourly_pnl.get(self._last_hour_key, 0)

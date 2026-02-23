@@ -21,6 +21,7 @@ from bot.time_util import date_key_est, hour_key_est
 from typing import Optional, List, Set
 
 from bot.polymarket import PolymarketClient, Market
+from bot.config import cfg
 
 log = logging.getLogger("strategy2")
 
@@ -41,8 +42,9 @@ class S2Stats:
     wins: int = 0
     losses: int = 0
     last_action: str = ""
-    # Hourly tracking
+    # Hourly + daily (for loss limit)
     hourly_pnl: dict = None  # {hour_key: pnl}
+    daily_pnl: float = 0.0
     current_hour_pnl: float = 0.0
     last_hour_report: str = ""
 
@@ -137,6 +139,9 @@ class Strategy2:
 
     async def _try_buy_both(self, market: Market):
         """Buy BOTH Up and Down sides of a market at 50-51c each."""
+        if cfg.daily_loss_limit_usdc < 0 and self.stats.daily_pnl <= cfg.daily_loss_limit_usdc:
+            log.info("S2: Skipping buy — daily P&L $%.2f at or below limit $%.2f", self.stats.daily_pnl, cfg.daily_loss_limit_usdc)
+            return
         await self.poly.get_market_prices(market)
         up_ask = market.yes_ask
         down_ask = market.no_ask
@@ -202,6 +207,7 @@ class Strategy2:
                 pos.status = "sold"
                 self.stats.sells_filled += 1
                 self.stats.total_pnl += pos.pnl
+                self.stats.daily_pnl += pos.pnl
                 self.stats.wins += 1
                 self._record_hourly_pnl(pos.pnl)
                 self.stats.last_action = f"SELL {pos.side} @${pos.sell_target:.2f} +${pos.pnl:.2f}"
@@ -216,25 +222,24 @@ class Strategy2:
                 if bid and bid > 0.5:
                     pos.exit_price = 1.0
                     pos.pnl = (1.0 - pos.entry_price) * pos.qty
+                    self.stats.total_pnl += pos.pnl
+                    self.stats.daily_pnl += pos.pnl
                     self.stats.wins += 1
-                elif bid is not None:
-                    pos.exit_price = 0.0
-                    pos.pnl = -pos.spent
-                    self.stats.losses += 1
                 else:
                     pos.exit_price = 0.0
                     pos.pnl = -pos.spent
+                    self.stats.total_pnl += pos.pnl
+                    self.stats.daily_pnl += pos.pnl
                     self.stats.losses += 1
-
                 pos.status = "resolved"
-                self.stats.total_pnl += pos.pnl
                 self._record_hourly_pnl(pos.pnl)
                 self.stats.last_action = f"RESOLVED {pos.side} ${pos.pnl:+.2f}"
                 self._closed.append(pos)
                 log.info(
-                    "[S2] RESOLVED %s: exit=$%.2f PnL=$%.2f | %s",
+                    "[S2] RESOLVED %s @ $%.2f | PnL: $%+.2f | %s",
                     pos.side, pos.exit_price, pos.pnl, pos.market.question[:45],
                 )
+                continue
 
     # ------------------------------------------------------------------
     # Hourly P&L tracking
@@ -251,8 +256,9 @@ class Strategy2:
         # Reset at midnight (new day)
         if not hasattr(self, "_last_day") or self._last_day != today:
             if hasattr(self, "_last_day") and self._last_day:
-                log.info("═══ S2 NEW DAY — resetting hourly P&L ═══")
+                log.info("═══ S2 NEW DAY — resetting hourly P&L and daily P&L ═══")
             self.stats.hourly_pnl = {}
+            self.stats.daily_pnl = 0.0
             self._last_day = today
 
         # Log report when a new hour starts
