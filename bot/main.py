@@ -30,7 +30,6 @@ from bot.config import cfg
 from bot.time_util import datetime_est, write_daily_calendar
 from bot.binance_feed import BinanceFeed
 from bot.polymarket import PolymarketClient
-from bot.strategy import Strategy
 
 
 class ESTFormatter(logging.Formatter):
@@ -111,50 +110,64 @@ async def _run_tunnel(log, shutdown_event: asyncio.Event):
             proc.kill()
 
 
-async def main(headless: bool = False, tunnel: bool = False):
+async def main(headless: bool = False, tunnel: bool = False, s3_only: bool = False, live: bool = False):
     setup_logging(headless)
     log = logging.getLogger("main")
+    s3_only = s3_only or getattr(cfg, "s3_only", False)
+    if live:
+        cfg.dry_run = False
+        log.info("--live flag: forcing LIVE mode (real Polymarket trades)")
 
     write_daily_calendar("daily_calendar_EST.txt", days=7)
     log.info("📅 Daily calendar (EST) written to daily_calendar_EST.txt")
 
     log.info("=" * 60)
-    log.info("Binance-Polymarket Arbitrage Bot starting")
-    log.info("  dry_run        = %s", cfg.dry_run)
-    log.info("  spike          = $%.0f in %.0fs", cfg.spike_move_usd, cfg.spike_window_sec)
-    log.info("  profit_target  = %.1f%%", cfg.profit_target_pct)
-    log.info("  max_position   = $%.2f", cfg.max_position_usdc)
-    log.info("  daily_loss_limit = $%.2f (0 = off)", cfg.daily_loss_limit_usdc)
+    if s3_only:
+        log.info("LATE BOT ONLY (S3) — Strategy 3 only")
+        log.info("  dry_run     = %s", cfg.dry_run)
+        log.info("  >>> %s <<<", "LIVE MODE — real Polymarket orders" if not cfg.dry_run else "DRY RUN — simulated only, no real orders")
+        start_h, start_m = getattr(cfg, "s3_trade_start_hour_est", 0), getattr(cfg, "s3_trade_start_minute_est", 0)
+        log.info("  trade window= %d:%02d–%d:00 EST", start_h, start_m, getattr(cfg, "s3_trade_end_hour_est", 5))
+        log.info("  daily target= $%.0f (stop new trades when daily PnL >= this)", getattr(cfg, "s3_daily_profit_target_usdc", 100))
+        log.info("  size/trade  = $%.0f", getattr(cfg, "s3_usdc_per_trade", 30))
+    else:
+        log.info("Binance-Polymarket Arbitrage Bot starting")
+        log.info("  dry_run        = %s", cfg.dry_run)
+        log.info("  spike          = $%.0f in %.0fs", cfg.spike_move_usd, cfg.spike_window_sec)
+        log.info("  profit_target  = %.1f%%", cfg.profit_target_pct)
+        log.info("  max_position   = $%.2f", cfg.max_position_usdc)
+        log.info("  daily_loss_limit = $%.2f (0 = off)", cfg.daily_loss_limit_usdc)
     log.info("=" * 60)
 
-    # --- Initialise components ---
     feed = BinanceFeed()
     poly = PolymarketClient()
     await poly.start()
-    strat = Strategy(feed, poly)
 
-    # Strategy 2: passive limit orders
-    from bot.strategy2 import Strategy2
-    strat2 = Strategy2(poly)
-
-    # Strategy 3: late momentum — buy the leader at 1:00 remaining
+    strat = strat2 = strat4 = None
+    strat3 = None
     from bot.strategy3 import Strategy3
     strat3 = Strategy3(poly, feed)
 
-    # Strategy 4: Buy both sides arb (feed used for resolution display: which side won)
-    from bot.strategy4 import Strategy4
-    strat4 = Strategy4(poly, feed)
+    if not s3_only:
+        from bot.strategy import Strategy
+        strat = Strategy(feed, poly)
+        from bot.strategy2 import Strategy2
+        strat2 = Strategy2(poly)
+        from bot.strategy4 import Strategy4
+        strat4 = Strategy4(poly, feed)
 
-    # --- Graceful shutdown ---
     shutdown_event = asyncio.Event()
 
     def _shutdown(*_):
         log.info("Shutdown signal received")
         feed.stop()
-        strat.stop()
-        strat2.stop()
+        if strat:
+            strat.stop()
+        if strat2:
+            strat2.stop()
         strat3.stop()
-        strat4.stop()
+        if strat4:
+            strat4.stop()
         shutdown_event.set()
 
     loop = asyncio.get_running_loop()
@@ -162,20 +175,21 @@ async def main(headless: bool = False, tunnel: bool = False):
         try:
             loop.add_signal_handler(sig_name, _shutdown)
         except NotImplementedError:
-            pass  # Windows
+            pass
 
-    # --- Build task list ---
     tasks = [
         asyncio.create_task(feed.run(), name="binance-feed"),
-        asyncio.create_task(strat.run(), name="strategy-1"),
-        asyncio.create_task(strat2.run(), name="strategy-2"),
         asyncio.create_task(strat3.run(), name="strategy-3"),
-        asyncio.create_task(strat4.run(), name="strategy-4"),
     ]
+    if strat:
+        tasks.append(asyncio.create_task(strat.run(), name="strategy-1"))
+    if strat2:
+        tasks.append(asyncio.create_task(strat2.run(), name="strategy-2"))
+    if strat4:
+        tasks.append(asyncio.create_task(strat4.run(), name="strategy-4"))
 
-    # Web dashboard server (always runs)
     from bot.server import DashboardServer
-    server = DashboardServer(feed, strat, strat2, strat3, strat4)
+    server = DashboardServer(feed, poly, strat, strat2, strat3, strat4, on_shutdown=_shutdown)
     tasks.append(asyncio.create_task(server.run(), name="web-dashboard"))
     log.info("Web dashboard: http://localhost:8899")
     local_ip = _local_ip()
@@ -184,24 +198,22 @@ async def main(headless: bool = False, tunnel: bool = False):
     if tunnel or cfg.use_tunnel:
         tasks.append(asyncio.create_task(_run_tunnel(log, shutdown_event), name="tunnel"))
 
-    if not headless:
+    if not headless and strat:
         from bot.dashboard import run_dashboard
         tasks.append(asyncio.create_task(run_dashboard(feed, strat), name="dashboard"))
     else:
         async def status_printer():
             while not shutdown_event.is_set():
-                s = strat.stats
+                s = strat3.stats
                 px = f"${feed.current_price:,.2f}" if feed.current_price else "n/a"
                 print(
-                    f"[STATUS] BTC={px}  signals={s.total_signals}  "
-                    f"trades={s.total_trades}  PnL=${s.total_pnl:+.2f}  "
+                    f"[S3] BTC={px}  trades={s.trades}  PnL=${s.total_pnl:+.2f}  day=${getattr(s,'daily_pnl',0):+.2f}  "
                     f"last={s.last_action or '-'}",
                     flush=True,
                 )
                 await asyncio.sleep(30)
         tasks.append(asyncio.create_task(status_printer(), name="status"))
 
-    # --- Run until shutdown ---
     try:
         await asyncio.gather(*tasks)
     except asyncio.CancelledError:
@@ -215,8 +227,10 @@ def cli():
     parser = argparse.ArgumentParser(description="Binance-Polymarket BTC 5-min Arbitrage Bot")
     parser.add_argument("--headless", action="store_true", help="Run without the terminal dashboard")
     parser.add_argument("--tunnel", action="store_true", help="Create public URL for dashboard (phone from anywhere; needs cloudflared)")
+    parser.add_argument("--s3-only", action="store_true", help="Run only the late bot (S3); 12am–5am EST, $30/trade, stop at daily profit target")
+    parser.add_argument("--live", action="store_true", help="Force LIVE mode (real Polymarket orders); overrides DRY_RUN env")
     args = parser.parse_args()
-    asyncio.run(main(headless=args.headless, tunnel=args.tunnel or cfg.use_tunnel))
+    asyncio.run(main(headless=args.headless, tunnel=args.tunnel or cfg.use_tunnel, s3_only=args.s3_only or cfg.s3_only, live=args.live))
 
 
 if __name__ == "__main__":

@@ -80,6 +80,7 @@ class PolymarketClient:
         self._clob_client = None  # lazy-init when not dry-run
         self._headers: Dict[str, str] = {}
         self._api_creds_loaded = False
+        self.balance_usdc: Optional[float] = None  # cached for dashboard
 
     # ------------------------------------------------------------------
     # lifecycle
@@ -109,16 +110,22 @@ class PolymarketClient:
                 api_secret=cfg.poly_api_secret,
                 api_passphrase=cfg.poly_api_passphrase,
             )
+            sig_type = getattr(cfg, "poly_signature_type", 1)
+            funder = getattr(cfg, "poly_funder_address", "") or None
             self._clob_client = ClobClient(
                 cfg.poly_clob_host,
                 key=cfg.poly_private_key,
                 chain_id=cfg.chain_id,
                 creds=creds,
+                signature_type=sig_type,
+                funder=funder,
             )
             self._api_creds_loaded = True
             log.info("Polymarket CLOB client initialised (LIVE mode)")
         except Exception as exc:
+            import traceback
             log.error("Failed to init CLOB client: %s -- falling back to DRY_RUN", exc)
+            log.error("Traceback: %s", traceback.format_exc())
             cfg.dry_run = True
 
     # ------------------------------------------------------------------
@@ -369,6 +376,69 @@ class PolymarketClient:
         except Exception as exc:
             log.error("Sell order failed: %s", exc, exc_info=True)
             return False
+
+    async def refresh_balance(self) -> None:
+        """Fetch USDC balance from Polymarket (for dashboard). Caches in self.balance_usdc."""
+        sig_type = getattr(cfg, "poly_signature_type", 1)
+        # 1. Try CLOB balance-allowance API
+        if self._clob_client:
+            try:
+                from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+
+                params = BalanceAllowanceParams(
+                    asset_type=AssetType.COLLATERAL,
+                    signature_type=sig_type,
+                )
+                resp = self._clob_client.get_balance_allowance(params)
+                if isinstance(resp, dict):
+                    for key in ("balance", "balanceAllowance", "balance_amount", "balanceAmount"):
+                        raw = resp.get(key)
+                        if raw is not None and str(raw).strip():
+                            val = float(str(raw).strip())
+                            if val >= 1_000_000:
+                                val = val / 1e6
+                            self.balance_usdc = round(val, 2)
+                            return
+            except Exception as exc:
+                log.warning("CLOB balance failed: %s", exc)
+        # 2. On-chain USDC balance (accurate for funder; polygon-rpc.com often 401, use publicnode)
+        funder = getattr(cfg, "poly_funder_address", "") or None
+        addr = funder or (self._clob_client.get_address() if self._clob_client else None)
+        if not addr and cfg.poly_private_key:
+            try:
+                from eth_account import Account
+                key = (cfg.poly_private_key or "").strip().lstrip("0x")
+                if len(key) >= 40:
+                    acct = Account.from_key("0x" + key)
+                    addr = acct.address
+            except Exception:
+                pass
+        if addr:
+            try:
+                from web3 import Web3
+                w3 = Web3(Web3.HTTPProvider("https://polygon-bor-rpc.publicnode.com"))
+                usdc = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+                addr_hex = addr.strip().lstrip("0x").lower().zfill(40)
+                data = "0x70a08231" + ("0" * 24) + addr_hex
+                bal_hex = w3.eth.call({"to": Web3.to_checksum_address(usdc), "data": data})
+                raw = int(bal_hex.hex(), 16)
+                self.balance_usdc = round(raw / 1e6, 2)
+                return
+            except Exception as exc:
+                log.debug("On-chain balance failed: %s", exc)
+        # 3. Fallback: Data API /value (can be stale)
+        try:
+            if addr:
+                url = "https://data-api.polymarket.com/value"
+                async with self._session.get(url, params={"user": addr}, timeout=aiohttp.ClientTimeout(total=5)) as r:
+                    if r.status == 200:
+                        data = await r.json()
+                        if isinstance(data, list) and data:
+                            v = data[0].get("value", 0)
+                            if v is not None:
+                                self.balance_usdc = round(float(v), 2)
+        except Exception as exc:
+            log.debug("Data API value failed: %s", exc)
 
     async def _get_best_bid(self, token_id: str) -> Optional[float]:
         try:
