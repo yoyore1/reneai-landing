@@ -27,6 +27,7 @@ from bot.time_util import date_key_est, hour_key_est
 from typing import Optional, List, Dict, Set
 
 from bot.polymarket import PolymarketClient, Market, Position
+from bot.config import cfg
 
 log = logging.getLogger("strategy3")
 
@@ -35,7 +36,7 @@ SKIP_THRESHOLD = 0.65      # if BOTH sides hit this during analysis window, skip
 ANALYSIS_START = 180.0     # start tracking at 3:00 remaining
 BUY_AT_REMAINING = 160.0   # actually buy at 2:40 remaining
 SKIP_NO_LEADER_AT = 60.0   # at 1:00 remaining: if neither side 70c+, don't buy at all
-USDC_PER_TRADE = 50.0
+USDC_PER_TRADE = 30.0      # overridden by cfg.s3_usdc_per_trade when config is loaded
 MANIPULATION_FAVOR_CENTS = 0.60   # detect manipulation: one side 60c+ but BTC on opposite side of strike
 MANIPULATION_HARD_SELL_CENTS = 0.30  # when manipulation detected, hard sell if our side drops to 30c or less
 S3_HARD_STOP_CENTS = 0.30   # for ALL S3 positions: if our side goes to 30c or below, sell immediately (avoid liquidation)
@@ -55,6 +56,7 @@ class S3Stats:
     last_action: str = ""
     hourly_pnl: dict = field(default_factory=dict)
     last_hour_report: str = ""
+    daily_pnl: float = 0.0   # EST day; when >= s3_daily_profit_target_usdc, no new trades until next day
 
 
 @dataclass
@@ -97,6 +99,26 @@ class Strategy3:
         self._running = False
         self._last_hour_key = ""
         self._last_day = ""
+
+    def _allowed_to_trade_now(self) -> bool:
+        """True if current time EST is in [start_hour:start_minute, end_hour) and daily profit target not hit."""
+        from bot.time_util import now_est
+        now = now_est()
+        hour, minute = now.hour, now.minute
+        start_h = getattr(cfg, "s3_trade_start_hour_est", 0)
+        start_m = getattr(cfg, "s3_trade_start_minute_est", 0)
+        end = getattr(cfg, "s3_trade_end_hour_est", 5)
+        past_start = (hour > start_h) or (hour == start_h and minute >= start_m)
+        if start_h <= end:
+            in_window = past_start and (hour < end)
+        else:
+            in_window = past_start or (hour < end)
+        if not in_window:
+            return False
+        target = getattr(cfg, "s3_daily_profit_target_usdc", 100.0)
+        if target <= 0:
+            return True
+        return getattr(self.stats, "daily_pnl", 0) < target
 
     async def run(self):
         self._running = True
@@ -173,6 +195,11 @@ class Strategy3:
 
             # Buy window: 2:40 remaining or less. Every tick: buy as soon as one side 70c+; or skip if no leader at 1m / choppy
             if remaining <= BUY_AT_REMAINING and not tracker.decision_made:
+                if not self._allowed_to_trade_now():
+                    tracker.decision_made = True
+                    self._decided_cids.add(cid)
+                    self.stats.markets_analyzed += 1
+                    continue
                 # Already passed 1 min with no leader → give up
                 if tracker.no_leader_at_1min:
                     tracker.decision_made = True
@@ -219,23 +246,26 @@ class Strategy3:
                     # Don't buy above 94c
                     if ask > S3_MAX_BUY_CENTS:
                         continue  # wait for better price or skip
-                    # Buy now (at 2:40 or less; ask <= 94c)
+                    # Buy now (at 2:40 or less; ask <= 94c) — actually place order on Polymarket
                     tracker.decision_made = True
                     self._decided_cids.add(cid)
                     self.stats.markets_analyzed += 1
-                    qty = math.floor((USDC_PER_TRADE / ask) * 100) / 100
+                    poly_side = "YES" if buy_side == "Up" else "NO"
+                    real_pos = await self.poly.buy(mkt, poly_side, cfg.s3_usdc_per_trade)
+                    qty = real_pos.qty or math.floor((cfg.s3_usdc_per_trade / ask) * 100) / 100
                     pos = S3Position(
                         market=mkt, side=buy_side, token_id=buy_token,
-                        entry_price=ask, qty=qty, spent=USDC_PER_TRADE,
+                        entry_price=real_pos.avg_entry or ask, qty=qty, spent=cfg.s3_usdc_per_trade,
                         entry_time=time.time(),
                     )
+                    pos.order_id = getattr(real_pos, "order_id", None)
                     self._positions.append(pos)
-                self.stats.trades += 1
-                self.stats.last_action = f"BUY {buy_side} @ ${ask:.3f} | {mkt.question[:30]}"
-                log.info(
-                    "[S3] BUY %s %.1f shares @ $%.3f ($%.2f) | %.0fs left | %s",
-                    buy_side, qty, ask, USDC_PER_TRADE, remaining, mkt.question[:45],
-                )
+                    self.stats.trades += 1
+                    self.stats.last_action = f"BUY {buy_side} @ ${ask:.3f} | {mkt.question[:30]}"
+                    log.info(
+                        "[S3] BUY %s %.1f shares @ $%.3f ($%.2f) | %.0fs left | %s",
+                        buy_side, qty, ask, cfg.s3_usdc_per_trade, remaining, mkt.question[:45],
+                    )
                 # else: no side 70c+ yet, keep waiting (don't set decision_made)
 
         # Check positions for resolution
@@ -253,8 +283,10 @@ class Strategy3:
             pos.exit_price = p.exit_price
             pos.pnl = p.pnl
             pos.status = "resolved"
-            self.stats.total_pnl += pos.pnl or 0
-            self._record_hourly_pnl(pos.pnl or 0)
+            pnl_val = pos.pnl or 0
+            self.stats.total_pnl += pnl_val
+            self.stats.daily_pnl += pnl_val
+            self._record_hourly_pnl(pnl_val)
             self._closed.append(pos)
         return sold
 
@@ -345,6 +377,7 @@ class Strategy3:
 
             pos.status = "resolved"
             self.stats.total_pnl += pos.pnl
+            self.stats.daily_pnl += pos.pnl
             self._record_hourly_pnl(pos.pnl)
             self.stats.last_action = f"RESOLVED {pos.side} ${pos.pnl:+.2f}"
             self._closed.append(pos)
@@ -354,8 +387,11 @@ class Strategy3:
             )
 
     def _record_hourly_pnl(self, pnl: float):
+        from bot.pnl_history import append_pnl
+
         hour_key = hour_key_est()
         self.stats.hourly_pnl[hour_key] = self.stats.hourly_pnl.get(hour_key, 0) + pnl
+        append_pnl(date_key_est(), hour_key, pnl)
 
     def _hourly_report(self):
         hour_key = hour_key_est()
@@ -363,8 +399,9 @@ class Strategy3:
 
         if self._last_day != today:
             if self._last_day:
-                log.info("═══ S3 NEW DAY — resetting hourly P&L ═══")
+                log.info("═══ S3 NEW DAY — resetting hourly P&L and daily P&L ═══")
             self.stats.hourly_pnl = {}
+            self.stats.daily_pnl = 0.0
             self._last_day = today
 
         if hour_key != self._last_hour_key and self._last_hour_key:
