@@ -68,11 +68,11 @@ def _local_ip() -> str:
         return ""
 
 
-async def _run_tunnel(log, shutdown_event: asyncio.Event):
-    """Start cloudflared quick tunnel to localhost:8899; log public URL and keep running."""
+async def _run_tunnel(log, shutdown_event: asyncio.Event, port: int = 8899):
+    """Start cloudflared quick tunnel to localhost:port; log public URL and keep running."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            "cloudflared", "tunnel", "--url", "http://127.0.0.1:8899",
+            "cloudflared", "tunnel", "--url", f"http://127.0.0.1:{port}",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
@@ -110,25 +110,56 @@ async def _run_tunnel(log, shutdown_event: asyncio.Event):
             proc.kill()
 
 
-async def main(headless: bool = False, tunnel: bool = False, s3_only: bool = False, live: bool = False):
+async def main(
+    headless: bool = False,
+    tunnel: bool = False,
+    s3_only: bool = False,
+    live: bool = False,
+    test: bool = False,
+    test_inverse: bool = False,
+    test_perfect: bool = False,
+):
     setup_logging(headless)
     log = logging.getLogger("main")
-    s3_only = s3_only or getattr(cfg, "s3_only", False)
-    if live:
+    s3_only = s3_only or getattr(cfg, "s3_only", False) or test or test_inverse or test_perfect
+    if test:
+        cfg.dry_run = True
+        cfg.s3_trade_start_hour_est = 0
+        cfg.s3_trade_start_minute_est = 0
+        cfg.s3_trade_end_hour_est = 24
+        cfg.test_mode = True
+        log.info("--test mode: DRY RUN (fake money), trades ALL DAY, dashboard port 8898")
+    elif test_inverse:
+        cfg.dry_run = True
+        cfg.s3_trade_start_hour_est = 0
+        cfg.s3_trade_start_minute_est = 0
+        cfg.s3_trade_end_hour_est = 24
+        cfg.test_mode = True
+        log.info("--test-inverse: DRY RUN inverse strategy (underdog), ALL DAY, dashboard port 8897")
+    elif test_perfect:
+        cfg.dry_run = True
+        cfg.s3_trade_start_hour_est = 0
+        cfg.s3_trade_start_minute_est = 0
+        cfg.s3_trade_end_hour_est = 24
+        cfg.test_mode = True
+        log.info("--test-perfect: DRY RUN perfect S3 (safer favorite), ALL DAY, dashboard port 8896")
+    elif live:
         cfg.dry_run = False
-        log.info("--live flag: forcing LIVE mode (real Polymarket trades)")
+        log.info("--live flag: forcing LIVE mode (real Polymarket orders)")
 
     write_daily_calendar("daily_calendar_EST.txt", days=7)
     log.info("📅 Daily calendar (EST) written to daily_calendar_EST.txt")
 
     log.info("=" * 60)
-    if s3_only:
-        log.info("LATE BOT ONLY (S3) — Strategy 3 only")
+    if s3_only or test or test_inverse or test_perfect:
+        suffix = " [INVERSE TEST]" if test_inverse else " [PERFECT TEST]" if test_perfect else " [TEST MODE]" if test else ""
+        log.info("LATE BOT ONLY (S3)" + suffix)
         log.info("  dry_run     = %s", cfg.dry_run)
         log.info("  >>> %s <<<", "LIVE MODE — real Polymarket orders" if not cfg.dry_run else "DRY RUN — simulated only, no real orders")
         start_h, start_m = getattr(cfg, "s3_trade_start_hour_est", 0), getattr(cfg, "s3_trade_start_minute_est", 0)
-        log.info("  trade window= %d:%02d–%d:00 EST", start_h, start_m, getattr(cfg, "s3_trade_end_hour_est", 5))
-        log.info("  daily target= $%.0f (stop new trades when daily PnL >= this)", getattr(cfg, "s3_daily_profit_target_usdc", 100))
+        end_h = getattr(cfg, "s3_trade_end_hour_est", 5)
+        log.info("  trade window= %d:%02d–%d:00 EST" + (" (all day)" if end_h >= 24 else ""), start_h, start_m, min(end_h, 24))
+        log.info("  daily target= $%.0f (50%% of trade size, stop for day when reached)", getattr(cfg, "s3_daily_profit_target_usdc", 15))
         log.info("  size/trade  = $%.0f", getattr(cfg, "s3_usdc_per_trade", 30))
     else:
         log.info("Binance-Polymarket Arbitrage Bot starting")
@@ -145,8 +176,15 @@ async def main(headless: bool = False, tunnel: bool = False, s3_only: bool = Fal
 
     strat = strat2 = strat4 = None
     strat3 = None
-    from bot.strategy3 import Strategy3
-    strat3 = Strategy3(poly, feed)
+    if test_inverse:
+        from bot.strategy3_inverse import Strategy3Inverse
+        strat3 = Strategy3Inverse(poly, feed)
+    elif test_perfect:
+        from bot.strategy3_perfect import Strategy3Perfect
+        strat3 = Strategy3Perfect(poly, feed)
+    else:
+        from bot.strategy3 import Strategy3
+        strat3 = Strategy3(poly, feed)
 
     if not s3_only:
         from bot.strategy import Strategy
@@ -158,8 +196,8 @@ async def main(headless: bool = False, tunnel: bool = False, s3_only: bool = Fal
 
     shutdown_event = asyncio.Event()
 
-    def _shutdown(*_):
-        log.info("Shutdown signal received")
+    def _shutdown(src: str = "signal"):
+        log.info("Shutdown requested (source=%s)", src)
         feed.stop()
         if strat:
             strat.stop()
@@ -173,7 +211,7 @@ async def main(headless: bool = False, tunnel: bool = False, s3_only: bool = Fal
     loop = asyncio.get_running_loop()
     for sig_name in (signal.SIGINT, signal.SIGTERM):
         try:
-            loop.add_signal_handler(sig_name, _shutdown)
+            loop.add_signal_handler(sig_name, lambda: _shutdown("signal"))
         except NotImplementedError:
             pass
 
@@ -189,14 +227,33 @@ async def main(headless: bool = False, tunnel: bool = False, s3_only: bool = Fal
         tasks.append(asyncio.create_task(strat4.run(), name="strategy-4"))
 
     from bot.server import DashboardServer
-    server = DashboardServer(feed, poly, strat, strat2, strat3, strat4, on_shutdown=_shutdown)
+    if test_inverse:
+        dash_port = 8897
+    elif test:
+        dash_port = 8898
+    elif test_perfect:
+        dash_port = 8896
+    else:
+        dash_port = 8899
+    server = DashboardServer(
+        feed,
+        poly,
+        strat,
+        strat2,
+        strat3,
+        strat4,
+        host="0.0.0.0",
+        port=dash_port,
+        on_shutdown=lambda: _shutdown("api"),
+    )
     tasks.append(asyncio.create_task(server.run(), name="web-dashboard"))
-    log.info("Web dashboard: http://localhost:8899")
+    label_suffix = " [INVERSE TEST]" if test_inverse else " [PERFECT TEST]" if test_perfect else " [TEST]" if test else ""
+    log.info("Web dashboard: http://localhost:%d%s", dash_port, label_suffix)
     local_ip = _local_ip()
     if local_ip:
-        log.info("On phone (same WiFi): http://%s:8899", local_ip)
+        log.info("On phone (same WiFi): http://%s:%d", local_ip, dash_port)
     if tunnel or cfg.use_tunnel:
-        tasks.append(asyncio.create_task(_run_tunnel(log, shutdown_event), name="tunnel"))
+        tasks.append(asyncio.create_task(_run_tunnel(log, shutdown_event, dash_port), name="tunnel"))
 
     if not headless and strat:
         from bot.dashboard import run_dashboard
@@ -206,8 +263,9 @@ async def main(headless: bool = False, tunnel: bool = False, s3_only: bool = Fal
             while not shutdown_event.is_set():
                 s = strat3.stats
                 px = f"${feed.current_price:,.2f}" if feed.current_price else "n/a"
+                label = "S3inv" if test_inverse else "S3perf" if test_perfect else "S3"
                 print(
-                    f"[S3] BTC={px}  trades={s.trades}  PnL=${s.total_pnl:+.2f}  day=${getattr(s,'daily_pnl',0):+.2f}  "
+                    f"[{label}] BTC={px}  trades={s.trades}  PnL=${s.total_pnl:+.2f}  day=${getattr(s,'daily_pnl',0):+.2f}  "
                     f"last={s.last_action or '-'}",
                     flush=True,
                 )
@@ -229,8 +287,21 @@ def cli():
     parser.add_argument("--tunnel", action="store_true", help="Create public URL for dashboard (phone from anywhere; needs cloudflared)")
     parser.add_argument("--s3-only", action="store_true", help="Run only the late bot (S3); 12am–5am EST, $30/trade, stop at daily profit target")
     parser.add_argument("--live", action="store_true", help="Force LIVE mode (real Polymarket orders); overrides DRY_RUN env")
+    parser.add_argument("--test", action="store_true", help="TEST MODE: dry run, trades all day, dashboard on port 8898 (fake money)")
+    parser.add_argument("--test-inverse", action="store_true", help="INVERSE TEST: same rules flipped (underdog), dry run, all day, dashboard port 8897")
+    parser.add_argument("--test-perfect", action="store_true", help="PERFECT TEST: safer S3 with chaos filters, dry run, all day, dashboard port 8896")
     args = parser.parse_args()
-    asyncio.run(main(headless=args.headless, tunnel=args.tunnel or cfg.use_tunnel, s3_only=args.s3_only or cfg.s3_only, live=args.live))
+    asyncio.run(
+        main(
+            headless=args.headless,
+            tunnel=args.tunnel or cfg.use_tunnel,
+            s3_only=args.s3_only or cfg.s3_only,
+            live=args.live,
+            test=args.test,
+            test_inverse=args.test_inverse,
+            test_perfect=args.test_perfect,
+        )
+    )
 
 
 if __name__ == "__main__":

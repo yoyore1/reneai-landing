@@ -19,6 +19,7 @@ from aiohttp import web
 PORT = 8900
 BOT_PORT = 8899
 TEST_BOT_PORT = 8898
+PERFECT_TEST_BOT_PORT = 8896
 INVERSE_TEST_BOT_PORT = 8897
 BOT_DIR = Path(__file__).resolve().parent.parent
 BOT_CMD = [sys.executable, "-m", "bot.main", "--headless", "--s3-only"]
@@ -64,6 +65,13 @@ h1{font-size:1.3rem;margin-bottom:0.5rem}
 </div>
 <p class="status" id="testStatus"></p>
 <hr style="border-color:#30363d;margin:1.5rem 0">
+<p class="sub" style="margin-bottom:0.5rem">Perfect test bot (safer S3, fake money, all day)</p>
+<div class="btns">
+<button id="perfectStartBtn" class="btn btn-start" style="background:#238636">Start Perfect Test</button>
+<button id="perfectStopBtn" class="btn btn-stop">Stop Perfect Test</button>
+</div>
+<p class="status" id="perfectStatus"></p>
+<hr style="border-color:#30363d;margin:1.5rem 0">
 <p class="sub" style="margin-bottom:0.5rem">Inverse test bot (underdog rules, fake money, all day)</p>
 <div class="btns">
 <button id="inverseStartBtn" class="btn btn-start" style="background:#a371f7">Start Inverse Test</button>
@@ -73,6 +81,7 @@ h1{font-size:1.3rem;margin-bottom:0.5rem}
 <div style="margin-top:1.5rem;display:flex;flex-direction:column;gap:0.5rem;align-items:center">
 <a class="dash" id="dashLink" href="#" target="_blank">Live Dashboard →</a>
 <a class="dash" id="testDashLink" href="#" target="_blank">Test Dashboard →</a>
+<a class="dash" id="perfectDashLink" href="#" target="_blank">Perfect Test Dashboard →</a>
 <a class="dash" id="inverseDashLink" href="#" target="_blank">Inverse Test Dashboard →</a>
 <a class="dash" href="/api/logs" target="_blank">View Live Logs</a>
 <a class="dash" href="/api/test/logs" target="_blank">View Test Logs</a>
@@ -82,14 +91,17 @@ h1{font-size:1.3rem;margin-bottom:0.5rem}
 <script>
 const BOT_PORT = """ + str(BOT_PORT) + """;
 const TEST_BOT_PORT = """ + str(TEST_BOT_PORT) + """;
+const PERFECT_TEST_BOT_PORT = """ + str(PERFECT_TEST_BOT_PORT) + """;
 const INVERSE_TEST_BOT_PORT = """ + str(INVERSE_TEST_BOT_PORT) + """;
 document.getElementById('dashLink').href = (location.protocol === 'https:' ? 'https:' : 'http:') + '//' + location.hostname + ':' + BOT_PORT;
 document.getElementById('testDashLink').href = (location.protocol === 'https:' ? 'https:' : 'http:') + '//' + location.hostname + ':' + (location.port || '8900') + '/test/';
+document.getElementById('perfectDashLink').href = (location.protocol === 'https:' ? 'https:' : 'http:') + '//' + location.hostname + ':' + (location.port || '8900') + '/perfect/';
 document.getElementById('inverseDashLink').href = (location.protocol === 'https:' ? 'https:' : 'http:') + '//' + location.hostname + ':' + (location.port || '8900') + '/inverse/';
 
 async function pollStatus(){
  const ok = await fetch('/api/status').then(r=>r.json());
  const testOk = await fetch('/api/test/status').then(r=>r.json());
+ const perfectOk = await fetch('/api/perfect/status').then(r=>r.json());
  const inverseOk = await fetch('/api/inverse/status').then(r=>r.json());
  document.getElementById('startBtn').disabled = ok.bot_running;
  document.getElementById('stopBtn').disabled = !ok.bot_running;
@@ -97,6 +109,9 @@ async function pollStatus(){
  document.getElementById('testStartBtn').disabled = testOk.test_bot_running;
  document.getElementById('testStopBtn').disabled = !testOk.test_bot_running;
  document.getElementById('testStatus').textContent = testOk.test_bot_running ? 'Test bot running' : 'Test bot stopped';
+ document.getElementById('perfectStartBtn').disabled = perfectOk.perfect_bot_running;
+ document.getElementById('perfectStopBtn').disabled = !perfectOk.perfect_bot_running;
+ document.getElementById('perfectStatus').textContent = perfectOk.perfect_bot_running ? 'Perfect test bot running' : 'Perfect test bot stopped';
  document.getElementById('inverseStartBtn').disabled = inverseOk.inverse_bot_running;
  document.getElementById('inverseStopBtn').disabled = !inverseOk.inverse_bot_running;
  document.getElementById('inverseStatus').textContent = inverseOk.inverse_bot_running ? 'Inverse test bot running' : 'Inverse test bot stopped';
@@ -135,6 +150,24 @@ document.getElementById('testStopBtn').onclick = async function(){
  document.getElementById('testStatus').textContent = 'Stopping...';
  await fetch('/api/test/stop', {method:'POST'});
  document.getElementById('testStatus').textContent = 'Stopped';
+ setTimeout(pollStatus, 1000);
+};
+
+document.getElementById('perfectStartBtn').onclick = async function(){
+ this.disabled = true;
+ document.getElementById('perfectStatus').textContent = 'Starting...';
+ const r = await fetch('/api/perfect/start', {method:'POST'});
+ const j = await r.json();
+ document.getElementById('perfectStatus').textContent = j.ok ? 'Started' : (j.error||'Failed');
+ setTimeout(pollStatus, 2000);
+};
+
+document.getElementById('perfectStopBtn').onclick = async function(){
+ if (!confirm('Stop the perfect test bot?')) return;
+ this.disabled = true;
+ document.getElementById('perfectStatus').textContent = 'Stopping...';
+ await fetch('/api/perfect/stop', {method:'POST'});
+ document.getElementById('perfectStatus').textContent = 'Stopped';
  setTimeout(pollStatus, 1000);
 };
 
@@ -188,6 +221,16 @@ def _inverse_test_bot_running() -> bool:
     try:
         import urllib.request
         req = urllib.request.Request(f"http://127.0.0.1:{INVERSE_TEST_BOT_PORT}/api/state")
+        urllib.request.urlopen(req, timeout=2)
+        return True
+    except Exception:
+        return False
+
+
+def _perfect_test_bot_running() -> bool:
+    try:
+        import urllib.request
+        req = urllib.request.Request(f"http://127.0.0.1:{PERFECT_TEST_BOT_PORT}/api/state")
         urllib.request.urlopen(req, timeout=2)
         return True
     except Exception:
@@ -312,6 +355,50 @@ def _stop_inverse_test_bot() -> "tuple[bool, str]":
         return False, str(e)
 
 
+def _start_perfect_test_bot() -> "tuple[bool, str]":
+    os.chdir(BOT_DIR)
+    log_file = BOT_DIR / "perfect_test_bot.log"
+    cmd = [
+        "screen",
+        "-dmS",
+        "perfectbot",
+        "bash",
+        "-c",
+        f"cd {BOT_DIR} && {sys.executable} -m bot.main --headless --test-perfect >> {log_file} 2>&1",
+    ]
+    try:
+        subprocess.run(cmd, cwd=str(BOT_DIR), capture_output=True, text=True, timeout=5)
+        return True, "Started"
+    except FileNotFoundError:
+        try:
+            with open(log_file, "a") as f:
+                subprocess.Popen(
+                    [sys.executable, "-m", "bot.main", "--headless", "--test-perfect"],
+                    cwd=str(BOT_DIR),
+                    stdout=f,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
+            return True, "Started (no screen)"
+        except Exception as e:
+            return False, str(e)
+    except Exception as e:
+        return False, str(e)
+
+
+def _stop_perfect_test_bot() -> "tuple[bool, str]":
+    try:
+        subprocess.run(["screen", "-S", "perfectbot", "-X", "quit"], capture_output=True, timeout=3)
+        return True, "Stopped"
+    except Exception:
+        pass
+    try:
+        subprocess.run(["pkill", "-f", "bot.main --headless --test-perfect"], capture_output=True, timeout=3)
+        return True, "Stopped"
+    except Exception as e:
+        return False, str(e)
+
+
 def _stop_bot() -> "tuple[bool, str]":
     # Kill screen session (and the bot inside it) - most reliable
     try:
@@ -398,8 +485,27 @@ async def inverse_logs_handler(request):
         return web.Response(text=f"Error reading logs: {e}", content_type="text/plain")
 
 
+async def perfect_logs_handler(request):
+    """Serve last 500 lines of perfect_test_bot.log."""
+    log_path = BOT_DIR / "perfect_test_bot.log"
+    if not log_path.exists():
+        return web.Response(text="No perfect test log yet. Start the perfect test bot first.", content_type="text/plain")
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        last = lines[-500:] if len(lines) > 500 else lines
+        body = "".join(last)
+        return web.Response(text=body, content_type="text/plain; charset=utf-8")
+    except Exception as e:
+        return web.Response(text=f"Error reading logs: {e}", content_type="text/plain")
+
+
 async def inverse_status_handler(request):
     return web.json_response({"inverse_bot_running": _inverse_test_bot_running()})
+
+
+async def perfect_status_handler(request):
+    return web.json_response({"perfect_bot_running": _perfect_test_bot_running()})
 
 
 async def inverse_start_handler(request):
@@ -413,6 +519,20 @@ async def inverse_stop_handler(request):
     if not _inverse_test_bot_running():
         return web.json_response({"ok": True, "msg": "Already stopped"})
     ok, msg = _stop_inverse_test_bot()
+    return web.json_response({"ok": ok, "error": None if ok else msg})
+
+
+async def perfect_start_handler(request):
+    if _perfect_test_bot_running():
+        return web.json_response({"ok": True, "msg": "Already running"})
+    ok, msg = _start_perfect_test_bot()
+    return web.json_response({"ok": ok, "error": None if ok else msg})
+
+
+async def perfect_stop_handler(request):
+    if not _perfect_test_bot_running():
+        return web.json_response({"ok": True, "msg": "Already stopped"})
+    ok, msg = _stop_perfect_test_bot()
     return web.json_response({"ok": ok, "error": None if ok else msg})
 
 
@@ -459,6 +579,7 @@ async def index_handler(request):
 
 
 _TEST_BOT_URL = "http://127.0.0.1:8898"
+_PERFECT_TEST_BOT_URL = "http://127.0.0.1:8896"
 _INVERSE_TEST_BOT_URL = "http://127.0.0.1:8897"
 
 
@@ -506,6 +627,71 @@ async def test_proxy_ws_handler(request):
     try:
         async with aiohttp.ClientSession() as session:
             async with session.ws_connect("ws://127.0.0.1:8898/ws") as ws_server:
+                async def forward_from_server():
+                    async for msg in ws_server:
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            await ws_client.send_str(msg.data)
+                        elif msg.type == aiohttp.WSMsgType.ERROR:
+                            break
+
+                async def forward_from_client():
+                    async for msg in ws_client:
+                        if msg.type == web.WSMsgType.TEXT:
+                            await ws_server.send_str(msg.data)
+                        elif msg.type in (web.WSMsgType.CLOSE, web.WSMsgType.ERROR):
+                            break
+
+                await asyncio.gather(forward_from_server(), forward_from_client())
+    except Exception:
+        pass
+    finally:
+        await ws_client.close()
+    return ws_client
+
+
+async def _proxy_to_perfect_bot(request, path: str):
+    """Proxy request to perfect test bot on 8896."""
+    url = f"{_PERFECT_TEST_BOT_URL}/{path}"
+    try:
+        async with aiohttp.ClientSession() as session:
+            if request.method == "GET":
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    body = await resp.read()
+                    return web.Response(body=body, status=resp.status, content_type=resp.content_type)
+            elif request.method == "POST":
+                body = await request.read()
+                async with session.post(url, data=body, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    return web.Response(status=resp.status)
+    except Exception as e:
+        return web.Response(text=f"Perfect test bot not reachable: {e}", status=503)
+
+
+async def perfect_dashboard_handler(request):
+    """Serve perfect test dashboard HTML (proxied from perfect bot on 8896)."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{_PERFECT_TEST_BOT_URL}/", timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                html = await resp.text()
+                html = html.replace("'/api/state'", "'/perfect-api/state'")
+                html = html.replace("'/api/verify-trades'", "'/perfect-api/verify-trades'")
+                html = html.replace("'/api/stop'", "'/perfect-api/stop'")
+                html = html.replace("+'/ws'", "+'/perfect-ws'")
+                return web.Response(text=html, content_type="text/html")
+    except Exception:
+        return web.Response(
+            text="<html><body><h2>Perfect test bot not running</h2><p>Start it from the launcher.</p></body></html>",
+            status=503,
+            content_type="text/html",
+        )
+
+
+async def perfect_proxy_ws_handler(request):
+    """WebSocket proxy to perfect test bot."""
+    ws_client = web.WebSocketResponse()
+    await ws_client.prepare(request)
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect("ws://127.0.0.1:8896/ws") as ws_server:
                 async def forward_from_server():
                     async for msg in ws_server:
                         if msg.type == aiohttp.WSMsgType.TEXT:
@@ -598,26 +784,36 @@ def main():
     app.router.add_get("/", index_handler)
     app.router.add_get("/test", test_dashboard_handler)
     app.router.add_get("/test/", test_dashboard_handler)
+    app.router.add_get("/perfect", perfect_dashboard_handler)
+    app.router.add_get("/perfect/", perfect_dashboard_handler)
     app.router.add_get("/inverse", inverse_dashboard_handler)
     app.router.add_get("/inverse/", inverse_dashboard_handler)
     app.router.add_get("/test-api/state", lambda r: _proxy_to_test_bot(r, "api/state"))
     app.router.add_get("/test-api/verify-trades", lambda r: _proxy_to_test_bot(r, "api/verify-trades"))
     app.router.add_post("/test-api/stop", lambda r: _proxy_to_test_bot(r, "api/stop"))
     app.router.add_get("/test-ws", test_proxy_ws_handler)
+    app.router.add_get("/perfect-api/state", lambda r: _proxy_to_perfect_bot(r, "api/state"))
+    app.router.add_get("/perfect-api/verify-trades", lambda r: _proxy_to_perfect_bot(r, "api/verify-trades"))
+    app.router.add_post("/perfect-api/stop", lambda r: _proxy_to_perfect_bot(r, "api/stop"))
+    app.router.add_get("/perfect-ws", perfect_proxy_ws_handler)
     app.router.add_get("/inverse-api/state", lambda r: _proxy_to_inverse_bot(r, "api/state"))
     app.router.add_get("/inverse-api/verify-trades", lambda r: _proxy_to_inverse_bot(r, "api/verify-trades"))
     app.router.add_post("/inverse-api/stop", lambda r: _proxy_to_inverse_bot(r, "api/stop"))
     app.router.add_get("/inverse-ws", inverse_proxy_ws_handler)
     app.router.add_get("/api/status", status_handler)
     app.router.add_get("/api/test/status", test_status_handler)
+    app.router.add_get("/api/perfect/status", perfect_status_handler)
     app.router.add_get("/api/inverse/status", inverse_status_handler)
     app.router.add_get("/api/logs", logs_handler)
     app.router.add_get("/api/test/logs", test_logs_handler)
+    app.router.add_get("/api/perfect/logs", perfect_logs_handler)
     app.router.add_get("/api/inverse/logs", inverse_logs_handler)
     app.router.add_post("/api/start", start_handler)
     app.router.add_post("/api/stop", stop_handler)
     app.router.add_post("/api/test/start", test_start_handler)
     app.router.add_post("/api/test/stop", test_stop_handler)
+    app.router.add_post("/api/perfect/start", perfect_start_handler)
+    app.router.add_post("/api/perfect/stop", perfect_stop_handler)
     app.router.add_post("/api/inverse/start", inverse_start_handler)
     app.router.add_post("/api/inverse/stop", inverse_stop_handler)
     app.router.add_post("/api/deploy", deploy_handler)
