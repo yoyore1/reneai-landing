@@ -308,10 +308,11 @@ class LauncherServer:
         self._port = port
         self._balance_checker = BalanceChecker()
         self._bots = {
-            "test": BotProcess("test", ["--port", "9001"], port=9001),
+            "test": BotProcess("test", ["--port", "9001", "--pnl-file", "pnl_test.json"], port=9001),
             "official": BotProcess(
                 "official",
-                ["--port", "9002", "--live", "--trade-start", "00:20", "--trade-end", "07:00"],
+                ["--port", "9002", "--live", "--trade-start", "00:20", "--trade-end", "07:00",
+                 "--pnl-file", "pnl_official.json"],
                 port=9002,
             ),
         }

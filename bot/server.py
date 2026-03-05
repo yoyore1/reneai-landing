@@ -1,12 +1,13 @@
 """
 S3 Dashboard — serves a clean web UI with live WebSocket updates.
+Includes USDC balance, PnL calendar, positions, and trades.
 """
 
 import asyncio
 import json
 import logging
 import time
-from typing import Set
+from typing import Set, Optional
 
 from aiohttp import web
 
@@ -31,6 +32,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .pill.live{background:rgba(34,197,94,0.12);color:#22c55e;border:1px solid rgba(34,197,94,0.25)}
   .pill.dry{background:rgba(234,179,8,0.12);color:#eab308;border:1px solid rgba(234,179,8,0.25)}
   .pill.hours{background:rgba(129,140,248,0.1);color:#818cf8;border:1px solid rgba(129,140,248,0.2)}
+  .pill.bal{background:rgba(34,197,94,0.08);color:#22c55e;border:1px solid rgba(34,197,94,0.15);font-size:13px;font-weight:700}
   .container{max-width:1200px;margin:0 auto;padding:16px}
   .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px}
   .stat{background:#111118;border:1px solid #1e1e2e;border-radius:10px;padding:14px}
@@ -58,18 +60,37 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .last{background:#111118;border:1px solid #1e1e2e;border-radius:10px;padding:12px 16px;
         margin-bottom:16px;font-size:12px;color:#999}
   .last strong{color:#818cf8}
-  .hourly-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:6px;padding:14px}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;animation:pulse 2s ease infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+  /* Calendar */
+  .cal-months{display:flex;flex-wrap:wrap;gap:6px;padding:14px}
+  .cal-month{padding:8px 14px;border-radius:8px;background:#0d0d14;border:1px solid #161622;
+             cursor:pointer;font-size:12px;font-weight:600;color:#555;transition:all 0.15s}
+  .cal-month:hover{border-color:#818cf8;color:#818cf8}
+  .cal-month.active{background:rgba(129,140,248,0.1);border-color:#818cf8;color:#818cf8}
+  .cal-days{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;padding:0 14px 14px}
+  .cal-day-hd{text-align:center;font-size:10px;color:#333;padding:4px;text-transform:uppercase}
+  .cal-day{text-align:center;padding:8px 2px;border-radius:6px;cursor:pointer;transition:all 0.12s;
+           background:#0d0d14;border:1px solid transparent;min-height:48px}
+  .cal-day:hover{border-color:#333}
+  .cal-day.active{border-color:#818cf8}
+  .cal-day .d{font-size:11px;color:#444;margin-bottom:2px}
+  .cal-day .v{font-size:12px;font-weight:700}
+  .cal-day.empty-day{background:transparent;cursor:default}
+  .cal-detail{padding:14px}
+  .cal-detail h3{font-size:13px;color:#888;margin-bottom:10px;font-weight:600}
+  .hourly-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(75px,1fr));gap:6px}
   .hcell{text-align:center;padding:6px;border-radius:6px;background:#0d0d14}
   .hcell .hr{font-size:10px;color:#444;margin-bottom:2px}
   .hcell .hv{font-size:13px;font-weight:700}
-  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;animation:pulse 2s ease infinite}
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+  .cal-summary{padding:8px 14px;font-size:12px;color:#555;display:flex;gap:16px}
 </style>
 </head>
 <body>
 <div class="top-bar">
   <h1><span>&#9670;</span> S3 Dashboard</h1>
   <div class="pills">
+    <span id="balance" class="pill bal">--</span>
     <span id="mode" class="pill dry">DRY RUN</span>
     <span id="hours" class="pill hours" style="display:none"></span>
   </div>
@@ -79,18 +100,34 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <div class="grid" id="stats"></div>
   <div class="panel"><div class="panel-hd">Open Positions</div><div id="openPos"><div class="empty">No open positions</div></div></div>
   <div class="panel"><div class="panel-hd">Recent Trades</div><div id="closedTrades"><div class="empty">No trades yet</div></div></div>
-  <div class="panel"><div class="panel-hd">Hourly P&amp;L</div><div id="hourlyPnl"><div class="empty">No data yet</div></div></div>
+  <div class="panel">
+    <div class="panel-hd">P&amp;L Calendar</div>
+    <div id="calendar"><div class="empty">Loading...</div></div>
+  </div>
 </div>
 <script>
+let calData={}, selectedMonth=null, selectedDay=null;
+const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
 const ws=new WebSocket(`ws://${location.host}/ws`);
 ws.onmessage=(e)=>{const d=JSON.parse(e.data);render(d)};
 ws.onclose=()=>setTimeout(()=>location.reload(),3000);
+
+// Load calendar data on start and every 60s
+function loadCal(){
+  fetch('/api/calendar').then(r=>r.json()).then(d=>{calData=d;renderCal()}).catch(()=>{});
+}
+loadCal();
+setInterval(loadCal,60000);
 
 function render(d){
   const m=document.getElementById('mode');
   if(d.dry_run){m.className='pill dry';m.textContent='DRY RUN'}
   else{m.className='pill live';m.innerHTML='<span class="dot" style="background:#22c55e"></span>LIVE'}
   if(d.trade_hours){const h=document.getElementById('hours');h.style.display='';h.textContent=d.trade_hours}
+  if(d.balance!==null&&d.balance!==undefined){
+    document.getElementById('balance').textContent='USDC $'+parseFloat(d.balance).toFixed(2);
+  }
   const s=d.stats;
   const pc=s.pnl>=0?'green':'red';
   document.getElementById('stats').innerHTML=`
@@ -105,7 +142,6 @@ function render(d){
   document.getElementById('lastAction').innerHTML=`<strong>Last:</strong> ${s.last_action||'waiting...'}`;
   renderOpen(d.positions);
   renderClosed(d.closed);
-  renderHourly(s.hourly_pnl);
 }
 
 function renderOpen(pos){
@@ -139,34 +175,122 @@ function renderClosed(trades){
   el.innerHTML=h+'</table>'
 }
 
-function renderHourly(pnl){
-  const el=document.getElementById('hourlyPnl');
-  const keys=Object.keys(pnl||{}).sort();
-  if(!keys.length){el.innerHTML='<div class="empty">No data yet</div>';return}
-  let h='<div class="hourly-grid">';
-  for(const k of keys){
-    const v=pnl[k];const c=v>=0?'pnl-p':'pnl-n';
-    h+=`<div class="hcell"><div class="hr">${k}</div><div class="hv ${c}">$${v.toFixed(2)}</div></div>`}
-  el.innerHTML=h+'</div>'
+function renderCal(){
+  const el=document.getElementById('calendar');
+  const now=new Date();
+  const curYear=2026;
+  if(!selectedMonth) selectedMonth=now.getMonth();
+  let h='<div class="cal-months">';
+  for(let i=0;i<12;i++){
+    const cls=i===selectedMonth?'cal-month active':'cal-month';
+    h+=`<div class="${cls}" onclick="selMonth(${i})">${MONTHS[i]}</div>`;
+  }
+  h+='</div>';
+  // Day headers
+  h+='<div class="cal-days">';
+  ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].forEach(d=>h+=`<div class="cal-day-hd">${d}</div>`);
+  // Days
+  const firstDay=new Date(curYear,selectedMonth,1).getDay();
+  const daysInMonth=new Date(curYear,selectedMonth+1,0).getDate();
+  let monthTotal=0, monthTrades=0, monthWins=0, monthLosses=0;
+  for(let i=0;i<firstDay;i++) h+='<div class="cal-day empty-day"></div>';
+  for(let d=1;d<=daysInMonth;d++){
+    const key=`${curYear}-${String(selectedMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const info=calData[key];
+    const active=key===selectedDay?'active':'';
+    if(info){
+      monthTotal+=info.total; monthTrades+=info.trades; monthWins+=info.wins; monthLosses+=info.losses;
+      const c=info.total>=0?'pnl-p':'pnl-n';
+      h+=`<div class="cal-day ${active}" onclick="selDay('${key}')"><div class="d">${d}</div><div class="v ${c}">$${info.total.toFixed(0)}</div></div>`;
+    } else {
+      h+=`<div class="cal-day ${active}" onclick="selDay('${key}')"><div class="d">${d}</div><div class="v dim">-</div></div>`;
+    }
+  }
+  h+='</div>';
+  // Month summary
+  const mc=monthTotal>=0?'green':'red';
+  h+=`<div class="cal-summary"><span>Month: <strong class="${mc}">$${monthTotal.toFixed(2)}</strong></span>
+      <span>Trades: ${monthTrades}</span><span class="green">W:${monthWins}</span><span class="red">L:${monthLosses}</span></div>`;
+  // Day detail
+  if(selectedDay && calData[selectedDay]){
+    const dayInfo=calData[selectedDay];
+    h+=`<div class="cal-detail"><h3>${selectedDay} &mdash; $${dayInfo.total.toFixed(2)} (${dayInfo.trades} trades, W:${dayInfo.wins} L:${dayInfo.losses})</h3>`;
+    h+='<div class="hourly-grid">';
+    for(let hr=0;hr<24;hr++){
+      const hk=String(hr).padStart(2,'0');
+      const val=dayInfo.hours?.[hk];
+      if(val!==undefined){
+        const c=val>=0?'pnl-p':'pnl-n';
+        h+=`<div class="hcell"><div class="hr">${hk}:00</div><div class="hv ${c}">$${val.toFixed(2)}</div></div>`;
+      } else {
+        h+=`<div class="hcell"><div class="hr">${hk}:00</div><div class="hv dim">-</div></div>`;
+      }
+    }
+    h+='</div></div>';
+  }
+  el.innerHTML=h;
 }
+
+function selMonth(m){selectedMonth=m;selectedDay=null;renderCal()}
+function selDay(d){selectedDay=d;renderCal()}
 </script>
 </body>
 </html>"""
 
 
+class BalanceChecker:
+    def __init__(self):
+        self._balance: Optional[float] = None
+        self._last_check: float = 0
+
+    @property
+    def balance(self) -> Optional[float]:
+        return self._balance
+
+    def check(self):
+        now = time.time()
+        if now - self._last_check < 30:
+            return
+        self._last_check = now
+        try:
+            from py_clob_client.client import ClobClient
+            from py_clob_client.clob_types import ApiCreds, BalanceAllowanceParams
+            creds = ApiCreds(
+                api_key=cfg.poly_api_key,
+                api_secret=cfg.poly_api_secret,
+                api_passphrase=cfg.poly_api_passphrase,
+            )
+            client = ClobClient(
+                cfg.poly_clob_host,
+                key=cfg.poly_private_key,
+                chain_id=cfg.chain_id,
+                creds=creds,
+                signature_type=1,
+            )
+            params = BalanceAllowanceParams(asset_type="COLLATERAL", signature_type=1)
+            result = client.get_balance_allowance(params)
+            raw = float(result.get("balance", 0))
+            self._balance = raw / 1_000_000
+        except Exception as exc:
+            log.warning("Balance check failed: %s", exc)
+
+
 class DashboardServer:
 
-    def __init__(self, strategy3, host="0.0.0.0", port=9001):
+    def __init__(self, strategy3, pnl_store=None, host="0.0.0.0", port=9001):
         self._strat3 = strategy3
+        self._pnl_store = pnl_store
         self._host = host
         self._port = port
         self._clients: Set[web.WebSocketResponse] = set()
         self._start_time = time.time()
+        self._balance = BalanceChecker()
 
         self._app = web.Application()
         self._app.router.add_get("/", self._index_handler)
         self._app.router.add_get("/ws", self._ws_handler)
         self._app.router.add_get("/api/state", self._state_handler)
+        self._app.router.add_get("/api/calendar", self._calendar_handler)
 
     def _build_state(self) -> dict:
         s3 = self._strat3
@@ -195,13 +319,16 @@ class DashboardServer:
         trade_hours = ""
         if s3._trade_hours:
             sh, sm, eh, em = s3._trade_hours
-            trade_hours = f"{sh:02d}:{sm:02d} – {eh:02d}:{em:02d} EST"
+            trade_hours = f"{sh:02d}:{sm:02d} - {eh:02d}:{em:02d} EST"
+
+        self._balance.check()
 
         return {
             "ts": now,
             "uptime": round(now - self._start_time),
             "dry_run": cfg.dry_run,
             "trade_hours": trade_hours,
+            "balance": self._balance.balance,
             "stats": {
                 "analyzed": st.markets_analyzed,
                 "trades": st.trades,
@@ -237,6 +364,11 @@ class DashboardServer:
 
     async def _state_handler(self, request):
         return web.json_response(self._build_state())
+
+    async def _calendar_handler(self, request):
+        if self._pnl_store:
+            return web.json_response(self._pnl_store.get_all())
+        return web.json_response({})
 
     async def _broadcast_loop(self):
         while True:

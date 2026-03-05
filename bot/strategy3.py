@@ -82,15 +82,19 @@ class S3WindowTracker:
 
 class Strategy3:
 
-    def __init__(self, poly: PolymarketClient, trade_hours=None):
+    def __init__(self, poly: PolymarketClient, trade_hours=None,
+                 pnl_store=None, email_on_loss=False):
         """
         trade_hours: optional (start_hour, start_min, end_hour, end_min) in EST.
-        If set, only places new trades during that window.
+        pnl_store: PnLStore instance for persisting PnL data.
+        email_on_loss: if True, sends email alerts on losing trades.
         """
         self.poly = poly
         self.stats = S3Stats()
         self._positions: List[S3Position] = []
         self._closed: List[S3Position] = []
+        self.pnl_store = pnl_store
+        self._email_on_loss = email_on_loss
         self._trackers: Dict[str, S3WindowTracker] = {}
         self._decided_cids: Set[str] = set()
         self._running = False
@@ -332,6 +336,9 @@ class Strategy3:
             reason.upper(), pos.side, pos.entry_price, pos.exit_price,
             pos.pnl, pos.market.question[:40],
         )
+        self._persist_trade(pos.pnl, is_win)
+        if not is_win and self._email_on_loss:
+            self._send_loss_email(pos, reason)
 
     def _close_position(self, pos: S3Position, exit_price: float, reason: str):
         """Close a position at resolution (no active sell needed)."""
@@ -351,6 +358,10 @@ class Strategy3:
             "[S3] RESOLVED %s: $%.2f → PnL $%+.2f | %s",
             pos.side, exit_price, pos.pnl, pos.market.question[:45],
         )
+        is_win = pos.pnl >= 0
+        self._persist_trade(pos.pnl, is_win)
+        if not is_win and self._email_on_loss:
+            self._send_loss_email(pos, reason)
 
     async def _discover(self):
         markets = await self.poly.find_active_btc_5min_markets()
@@ -391,6 +402,45 @@ class Strategy3:
         if hour_key not in self.stats.hourly_pnl:
             self.stats.hourly_pnl[hour_key] = 0.0
         self._last_hour_key = hour_key
+
+    def _persist_trade(self, pnl: float, is_win: bool):
+        if self.pnl_store:
+            self.pnl_store.record_trade(pnl, is_win)
+
+    def _send_loss_email(self, pos: S3Position, reason: str):
+        import threading
+        threading.Thread(target=self._email_worker, args=(pos, reason), daemon=True).start()
+
+    def _email_worker(self, pos: S3Position, reason: str):
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+            subject = f"S3 LOSS: {reason.upper()} {pos.side} ${pos.pnl:+.2f}"
+            body = (
+                f"Trade Loss Alert\n"
+                f"{'='*40}\n"
+                f"Side:    {pos.side}\n"
+                f"Entry:   ${pos.entry_price:.3f}\n"
+                f"Exit:    ${pos.exit_price:.3f}\n"
+                f"Qty:     {pos.qty:.1f}\n"
+                f"PnL:     ${pos.pnl:+.2f}\n"
+                f"Reason:  {reason.upper()}\n"
+                f"Market:  {pos.market.question}\n"
+                f"{'='*40}\n"
+                f"Total PnL: ${self.stats.total_pnl:+.2f}\n"
+                f"W/L: {self.stats.wins}/{self.stats.losses}\n"
+            )
+            msg = MIMEText(body)
+            msg["Subject"] = subject
+            msg["From"] = cfg.email_from
+            msg["To"] = cfg.email_to
+            with smtplib.SMTP(cfg.smtp_host, cfg.smtp_port) as s:
+                s.starttls()
+                s.login(cfg.email_user, cfg.email_password)
+                s.sendmail(cfg.email_from, cfg.email_to, msg.as_string())
+            log.info("Loss email sent: %s", subject)
+        except Exception as exc:
+            log.warning("Failed to send loss email: %s", exc)
 
     @property
     def open_positions(self) -> List[S3Position]:

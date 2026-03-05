@@ -3,9 +3,8 @@
 S3 Bot — Late Momentum Strategy
 
 Usage:
-    python -m bot.main                                              # test: dry run, port 9001
-    python -m bot.main --port 9002 --live                           # official: live, port 9002
-    python -m bot.main --port 9002 --live --trade-start 00:20 --trade-end 07:00  # with EST time window
+    python -m bot.main                                                          # test: dry run, port 9001
+    python -m bot.main --port 9002 --live --trade-start 00:20 --trade-end 07:00 # official: live, time-restricted
 """
 
 import argparse
@@ -17,6 +16,7 @@ import sys
 from bot.config import cfg
 from bot.polymarket import PolymarketClient
 from bot.strategy3 import Strategy3
+from bot.pnl_store import PnLStore
 
 
 def setup_logging():
@@ -27,12 +27,11 @@ def setup_logging():
 
 
 def parse_time(s: str):
-    """Parse 'HH:MM' → (hour, minute)."""
     parts = s.split(":")
     return int(parts[0]), int(parts[1])
 
 
-async def main(port: int, live: bool, trade_start: str, trade_end: str):
+async def main(port: int, live: bool, trade_start: str, trade_end: str, pnl_file: str):
     setup_logging()
     log = logging.getLogger("main")
 
@@ -47,16 +46,23 @@ async def main(port: int, live: bool, trade_start: str, trade_end: str):
         eh, em = parse_time(trade_end)
         trade_hours = (sh, sm, eh, em)
 
+    pnl_store = PnLStore(pnl_file)
+    email_on_loss = live and bool(cfg.email_to)
+
     mode_str = "LIVE" if not cfg.dry_run else "DRY RUN"
     log.info("=" * 50)
     log.info("S3 Bot starting | %s | port %d", mode_str, port)
     if trade_hours:
-        log.info("  Trading hours: %s → %s EST", trade_start, trade_end)
+        log.info("  Trading hours: %s -> %s EST", trade_start, trade_end)
+    log.info("  PnL file: %s", pnl_file)
+    if email_on_loss:
+        log.info("  Loss emails -> %s", cfg.email_to)
     log.info("=" * 50)
 
     poly = PolymarketClient()
     await poly.start()
-    strat3 = Strategy3(poly, trade_hours=trade_hours)
+    strat3 = Strategy3(poly, trade_hours=trade_hours,
+                       pnl_store=pnl_store, email_on_loss=email_on_loss)
 
     shutdown_event = asyncio.Event()
 
@@ -73,7 +79,7 @@ async def main(port: int, live: bool, trade_start: str, trade_end: str):
             pass
 
     from bot.server import DashboardServer
-    server = DashboardServer(strat3, host="0.0.0.0", port=port)
+    server = DashboardServer(strat3, pnl_store=pnl_store, host="0.0.0.0", port=port)
 
     tasks = [
         asyncio.create_task(strat3.run(), name="strategy-3"),
@@ -94,12 +100,14 @@ async def main(port: int, live: bool, trade_start: str, trade_end: str):
 def cli():
     parser = argparse.ArgumentParser(description="S3 Late Momentum Bot")
     parser.add_argument("--port", type=int, default=9001)
-    parser.add_argument("--live", action="store_true", help="Enable live trading (real money)")
+    parser.add_argument("--live", action="store_true", help="Enable live trading")
     parser.add_argument("--trade-start", type=str, default="", help="Start time EST (HH:MM)")
     parser.add_argument("--trade-end", type=str, default="", help="End time EST (HH:MM)")
+    parser.add_argument("--pnl-file", type=str, default="pnl_data.json", help="PnL data file")
     args = parser.parse_args()
     asyncio.run(main(port=args.port, live=args.live,
-                      trade_start=args.trade_start, trade_end=args.trade_end))
+                      trade_start=args.trade_start, trade_end=args.trade_end,
+                      pnl_file=args.pnl_file))
 
 
 if __name__ == "__main__":

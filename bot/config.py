@@ -22,5 +22,13 @@ class Config:
     poly_clob_host: str = "https://clob.polymarket.com"
     chain_id: int = 137
 
+    # Email alerts
+    email_to: str = os.getenv("EMAIL_TO", "")
+    email_from: str = os.getenv("EMAIL_FROM", "")
+    email_user: str = os.getenv("EMAIL_USER", "")
+    email_password: str = os.getenv("EMAIL_PASSWORD", "")
+    smtp_host: str = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    smtp_port: int = int(os.getenv("SMTP_PORT", "587"))
+
 
 cfg = Config()
