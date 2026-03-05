@@ -19,6 +19,13 @@ import os
 import threading
 from datetime import datetime, timezone
 
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo
+
+EST = ZoneInfo("America/New_York")
+
 log = logging.getLogger("pnl_store")
 
 
@@ -48,7 +55,7 @@ class PnLStore:
             log.warning("Failed to save PnL data: %s", exc)
 
     def record_trade(self, pnl: float, is_win: bool):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(EST)
         day_key = now.strftime("%Y-%m-%d")
         hour_key = now.strftime("%H")
 
