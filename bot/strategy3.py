@@ -102,6 +102,7 @@ class Strategy3:
         self._last_hour_key = ""
         self._last_day = ""
         self._trade_hours = trade_hours
+        self._cooldown_until: float = 0  # skip next window after a loss
 
     def _is_trading_time(self) -> bool:
         if not self._trade_hours:
@@ -191,9 +192,11 @@ class Strategy3:
                     )
 
                 # Buy window: 3:00 to 1:00 remaining
+                in_cooldown = now < self._cooldown_until
                 if (remaining <= BUY_WINDOW_START and
                         not tracker.bought and
                         not tracker.choppy and
+                        not in_cooldown and
                         trading_ok):
                     up_now = up_bid or 0
                     down_now = down_bid or 0
@@ -217,7 +220,10 @@ class Strategy3:
                 self._decided_cids.add(cid)
                 self.stats.markets_analyzed += 1
 
-                if tracker.choppy:
+                if now < self._cooldown_until:
+                    self.stats.last_action = "SKIP COOLDOWN (loss recovery)"
+                    log.info("S3 SKIP COOLDOWN: %s", mkt.question[:40])
+                elif tracker.choppy:
                     self.stats.skipped_choppy += 1
                     self.stats.last_action = (
                         f"SKIP CHOPPY (Up={tracker.up_high:.2f} Down={tracker.down_high:.2f})"
@@ -338,8 +344,11 @@ class Strategy3:
             pos.pnl, pos.market.question[:40],
         )
         self._persist_trade(pos.pnl, is_win)
-        if not is_win and self._email_on_loss:
-            self._send_loss_email(pos, reason)
+        if not is_win:
+            self._cooldown_until = time.time() + 300
+            log.info("S3 COOLDOWN: skipping next 5-min window after loss")
+            if self._email_on_loss:
+                self._send_loss_email(pos, reason)
 
     def _close_position(self, pos: S3Position, exit_price: float, reason: str):
         """Close a position at resolution (no active sell needed)."""
@@ -361,8 +370,11 @@ class Strategy3:
         )
         is_win = pos.pnl >= 0
         self._persist_trade(pos.pnl, is_win)
-        if not is_win and self._email_on_loss:
-            self._send_loss_email(pos, reason)
+        if not is_win:
+            self._cooldown_until = time.time() + 300
+            log.info("S3 COOLDOWN: skipping next 5-min window after loss")
+            if self._email_on_loss:
+                self._send_loss_email(pos, reason)
 
     async def _discover(self):
         markets = await self.poly.find_active_btc_5min_markets()
