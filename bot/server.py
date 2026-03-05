@@ -62,6 +62,20 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .last strong{color:#818cf8}
   .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;animation:pulse 2s ease infinite}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+  .size-bar{background:#111118;border:1px solid #1e1e2e;border-radius:10px;padding:12px 16px;
+            margin-bottom:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .size-bar label{font-size:12px;color:#888;font-weight:600;white-space:nowrap}
+  .size-bar input[type=number]{background:#0a0a0f;border:1px solid #1e1e2e;border-radius:8px;
+    padding:8px 12px;color:#fff;font-size:16px;font-weight:700;width:100px;text-align:center;
+    outline:none;-moz-appearance:textfield}
+  .size-bar input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
+  .size-bar input[type=number]:focus{border-color:#818cf8}
+  .size-bar button{padding:8px 16px;border-radius:8px;background:#818cf8;color:#fff;border:none;
+    font-size:12px;font-weight:600;cursor:pointer;transition:all 0.15s}
+  .size-bar button:hover{background:#6366f1}
+  .size-bar .current{font-size:13px;color:#22c55e;font-weight:700}
+  .size-bar .saved{font-size:11px;color:#22c55e;opacity:0;transition:opacity 0.3s}
+  .size-bar .saved.show{opacity:1}
   /* Calendar */
   .cal-months{display:flex;flex-wrap:wrap;gap:6px;padding:14px}
   .cal-month{padding:8px 14px;border-radius:8px;background:#0d0d14;border:1px solid #161622;
@@ -96,6 +110,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   </div>
 </div>
 <div class="container">
+  <div class="size-bar">
+    <label>Trade Size</label>
+    <span>$</span>
+    <input type="number" id="sizeInput" min="1" max="500" step="1" value="20">
+    <button onclick="setSize()">Update</button>
+    <span class="current" id="curSize">$20</span>
+    <span class="saved" id="savedMsg">Saved!</span>
+  </div>
   <div class="last" id="lastAction"><strong>Last:</strong> waiting...</div>
   <div class="grid" id="stats"></div>
   <div class="panel"><div class="panel-hd">Open Positions</div><div id="openPos"><div class="empty">No open positions</div></div></div>
@@ -120,6 +142,15 @@ function loadCal(){
 loadCal();
 setInterval(loadCal,60000);
 
+function setSize(){
+  const val=parseFloat(document.getElementById('sizeInput').value);
+  if(!val||val<1)return;
+  fetch('/api/set-size',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({size:val})}).then(r=>r.json()).then(d=>{
+    if(d.ok){const msg=document.getElementById('savedMsg');msg.classList.add('show');setTimeout(()=>msg.classList.remove('show'),2000)}
+  });
+}
+
 function render(d){
   const m=document.getElementById('mode');
   if(d.dry_run){m.className='pill dry';m.textContent='DRY RUN'}
@@ -128,6 +159,7 @@ function render(d){
   if(d.balance!==null&&d.balance!==undefined){
     document.getElementById('balance').textContent='USDC $'+parseFloat(d.balance).toFixed(2);
   }
+  if(d.trade_size){document.getElementById('curSize').textContent='$'+d.trade_size.toFixed(0)}
   const s=d.stats;
   const pc=s.pnl>=0?'green':'red';
   document.getElementById('stats').innerHTML=`
@@ -291,6 +323,7 @@ class DashboardServer:
         self._app.router.add_get("/ws", self._ws_handler)
         self._app.router.add_get("/api/state", self._state_handler)
         self._app.router.add_get("/api/calendar", self._calendar_handler)
+        self._app.router.add_post("/api/set-size", self._set_size_handler)
 
     def _build_state(self) -> dict:
         s3 = self._strat3
@@ -329,6 +362,7 @@ class DashboardServer:
             "dry_run": cfg.dry_run,
             "trade_hours": trade_hours,
             "balance": self._balance.balance,
+            "trade_size": s3.trade_size,
             "stats": {
                 "analyzed": st.markets_analyzed,
                 "trades": st.trades,
@@ -369,6 +403,18 @@ class DashboardServer:
         if self._pnl_store:
             return web.json_response(self._pnl_store.get_all())
         return web.json_response({})
+
+    async def _set_size_handler(self, request):
+        try:
+            data = await request.json()
+            size = float(data.get("size", 0))
+            if 1 <= size <= 500:
+                self._strat3.trade_size = size
+                log.info("Trade size updated to $%.0f", size)
+                return web.json_response({"ok": True, "size": size})
+        except Exception as exc:
+            log.warning("Set size failed: %s", exc)
+        return web.json_response({"ok": False}, status=400)
 
     async def _broadcast_loop(self):
         while True:

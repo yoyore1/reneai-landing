@@ -35,7 +35,7 @@ BUY_WINDOW_START = 180.0    # can buy from 3:00 remaining
 BUY_WINDOW_END = 60.0       # stop buying at 1:00 remaining
 TP_PRICE = 0.94
 SL_PRICE = 0.28
-USDC_PER_TRADE = 50.0
+USDC_PER_TRADE = 20.0
 
 
 @dataclass
@@ -95,6 +95,7 @@ class Strategy3:
         self._closed: List[S3Position] = []
         self.pnl_store = pnl_store
         self._email_on_loss = email_on_loss
+        self.trade_size = USDC_PER_TRADE
         self._trackers: Dict[str, S3WindowTracker] = {}
         self._decided_cids: Set[str] = set()
         self._running = False
@@ -242,9 +243,9 @@ class Strategy3:
         if ask <= 0:
             return
 
-        result = await self.poly.buy(mkt, side_str, USDC_PER_TRADE)
+        result = await self.poly.buy(mkt, side_str, self.trade_size)
         entry = result.avg_entry if result.avg_entry > 0 else ask
-        qty = result.qty if result.qty > 0 else math.floor((USDC_PER_TRADE / ask) * 100) / 100
+        qty = result.qty if result.qty > 0 else math.floor((self.trade_size / ask) * 100) / 100
 
         pos = S3Position(
             market=mkt, side=buy_side, token_id=buy_token,
