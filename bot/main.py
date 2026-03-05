@@ -1,18 +1,11 @@
 #!/usr/bin/env python3
 """
-Binance-Polymarket 5-Minute BTC Arbitrage Bot
-==============================================
-
-Entry point.  Spins up concurrent tasks:
-  1. Binance real-time price feed (WebSocket)
-  2. Strategy engine (spike detection + order management)
-  3. Terminal dashboard (Rich live display) OR web UI
-  4. Web dashboard server (always on at http://localhost:8899)
+S3 Bot — Late Momentum Strategy
 
 Usage:
-    python -m bot.main              # terminal dashboard + web UI
-    python -m bot.main --headless   # logs only + web UI
-    python -m bot.main --web-only   # web UI only (no terminal dashboard)
+    python -m bot.main                                              # test: dry run, port 9001
+    python -m bot.main --port 9002 --live                           # official: live, port 9002
+    python -m bot.main --port 9002 --live --trade-start 00:20 --trade-end 07:00  # with EST time window
 """
 
 import argparse
@@ -22,58 +15,53 @@ import signal
 import sys
 
 from bot.config import cfg
-from bot.binance_feed import BinanceFeed
 from bot.polymarket import PolymarketClient
-from bot.strategy import Strategy
+from bot.strategy3 import Strategy3
 
 
-def setup_logging(headless: bool):
-    level = logging.INFO
+def setup_logging():
     fmt = "%(asctime)s [%(name)-12s] %(levelname)-7s %(message)s"
-    if headless:
-        logging.basicConfig(level=level, format=fmt, stream=sys.stdout)
-    else:
-        # When the dashboard is active, log to file so it doesn't mess up the TUI
-        logging.basicConfig(level=level, format=fmt, filename="bot.log", filemode="a")
-    # Suppress noisy libraries
+    logging.basicConfig(level=logging.INFO, format=fmt, stream=sys.stdout)
     logging.getLogger("websockets").setLevel(logging.WARNING)
     logging.getLogger("aiohttp").setLevel(logging.WARNING)
 
 
-async def main(headless: bool = False):
-    setup_logging(headless)
+def parse_time(s: str):
+    """Parse 'HH:MM' → (hour, minute)."""
+    parts = s.split(":")
+    return int(parts[0]), int(parts[1])
+
+
+async def main(port: int, live: bool, trade_start: str, trade_end: str):
+    setup_logging()
     log = logging.getLogger("main")
 
-    log.info("=" * 60)
-    log.info("Binance-Polymarket Arbitrage Bot starting")
-    log.info("  dry_run        = %s", cfg.dry_run)
-    log.info("  spike          = $%.0f in %.0fs", cfg.spike_move_usd, cfg.spike_window_sec)
-    log.info("  profit_target  = %.1f%%", cfg.profit_target_pct)
-    log.info("  max_position   = $%.2f", cfg.max_position_usdc)
-    log.info("=" * 60)
+    if live:
+        cfg.dry_run = False
+    else:
+        cfg.dry_run = True
 
-    # --- Initialise components ---
-    feed = BinanceFeed()
+    trade_hours = None
+    if trade_start and trade_end:
+        sh, sm = parse_time(trade_start)
+        eh, em = parse_time(trade_end)
+        trade_hours = (sh, sm, eh, em)
+
+    mode_str = "LIVE" if not cfg.dry_run else "DRY RUN"
+    log.info("=" * 50)
+    log.info("S3 Bot starting | %s | port %d", mode_str, port)
+    if trade_hours:
+        log.info("  Trading hours: %s → %s EST", trade_start, trade_end)
+    log.info("=" * 50)
+
     poly = PolymarketClient()
     await poly.start()
-    strat = Strategy(feed, poly)
+    strat3 = Strategy3(poly, trade_hours=trade_hours)
 
-    # Strategy 2: passive limit orders
-    from bot.strategy2 import Strategy2
-    strat2 = Strategy2(poly)
-
-    # Strategy 3: late momentum — buy the leader at 1:30 remaining
-    from bot.strategy3 import Strategy3
-    strat3 = Strategy3(poly)
-
-    # --- Graceful shutdown ---
     shutdown_event = asyncio.Event()
 
     def _shutdown(*_):
         log.info("Shutdown signal received")
-        feed.stop()
-        strat.stop()
-        strat2.stop()
         strat3.stop()
         shutdown_event.set()
 
@@ -82,40 +70,18 @@ async def main(headless: bool = False):
         try:
             loop.add_signal_handler(sig_name, _shutdown)
         except NotImplementedError:
-            pass  # Windows
+            pass
 
-    # --- Build task list ---
+    from bot.server import DashboardServer
+    server = DashboardServer(strat3, host="0.0.0.0", port=port)
+
     tasks = [
-        asyncio.create_task(feed.run(), name="binance-feed"),
-        asyncio.create_task(strat.run(), name="strategy-1"),
-        asyncio.create_task(strat2.run(), name="strategy-2"),
         asyncio.create_task(strat3.run(), name="strategy-3"),
+        asyncio.create_task(server.run(), name="dashboard"),
     ]
 
-    # Web dashboard server (always runs)
-    from bot.server import DashboardServer
-    server = DashboardServer(feed, strat, strat2, strat3)
-    tasks.append(asyncio.create_task(server.run(), name="web-dashboard"))
-    log.info("Web dashboard will be at http://localhost:8899")
+    log.info("Dashboard at http://0.0.0.0:%d", port)
 
-    if not headless:
-        from bot.dashboard import run_dashboard
-        tasks.append(asyncio.create_task(run_dashboard(feed, strat), name="dashboard"))
-    else:
-        async def status_printer():
-            while not shutdown_event.is_set():
-                s = strat.stats
-                px = f"${feed.current_price:,.2f}" if feed.current_price else "n/a"
-                print(
-                    f"[STATUS] BTC={px}  signals={s.total_signals}  "
-                    f"trades={s.total_trades}  PnL=${s.total_pnl:+.2f}  "
-                    f"last={s.last_action or '-'}",
-                    flush=True,
-                )
-                await asyncio.sleep(30)
-        tasks.append(asyncio.create_task(status_printer(), name="status"))
-
-    # --- Run until shutdown ---
     try:
         await asyncio.gather(*tasks)
     except asyncio.CancelledError:
@@ -126,10 +92,14 @@ async def main(headless: bool = False):
 
 
 def cli():
-    parser = argparse.ArgumentParser(description="Binance-Polymarket BTC 5-min Arbitrage Bot")
-    parser.add_argument("--headless", action="store_true", help="Run without the terminal dashboard")
+    parser = argparse.ArgumentParser(description="S3 Late Momentum Bot")
+    parser.add_argument("--port", type=int, default=9001)
+    parser.add_argument("--live", action="store_true", help="Enable live trading (real money)")
+    parser.add_argument("--trade-start", type=str, default="", help="Start time EST (HH:MM)")
+    parser.add_argument("--trade-end", type=str, default="", help="End time EST (HH:MM)")
     args = parser.parse_args()
-    asyncio.run(main(headless=args.headless))
+    asyncio.run(main(port=args.port, live=args.live,
+                      trade_start=args.trade_start, trade_end=args.trade_end))
 
 
 if __name__ == "__main__":
