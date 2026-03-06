@@ -22,6 +22,7 @@ from typing import Optional, List, Dict, Set
 
 from bot.config import cfg
 from bot.polymarket import PolymarketClient, Market
+from bot.trade_history import log_research_trade, log_daily_snapshot
 
 log = logging.getLogger("strategy3_vol")
 
@@ -596,6 +597,10 @@ class Strategy3Vol:
                         self.stats.filtered_would_lose += 1
                 self._closed.append(ph)
                 self._phantoms.remove(ph)
+                try:
+                    log_research_trade(ph)
+                except Exception as e:
+                    log.warning("Failed to log phantom to history: %s", e)
 
     def _close_position(self, pos: S3Position, exit_price: float, reason: str):
         pos.exit_price = exit_price
@@ -639,6 +644,11 @@ class Strategy3Vol:
         self.stats.last_action = f"{reason.upper()} {pos.side} ${pos.pnl:+.2f} depth=${pos.vol_snapshot['leader']['bid_depth_total']:.0f}" if pos.vol_snapshot else f"{reason.upper()} {pos.side} ${pos.pnl:+.2f}"
         self._persist_trade(pos.pnl, is_win)
 
+        try:
+            log_research_trade(pos)
+        except Exception as e:
+            log.warning("Failed to log trade to history: %s", e)
+
     async def _discover(self):
         markets = await self.poly.find_active_btc_5min_markets()
         now = time.time()
@@ -663,6 +673,22 @@ class Strategy3Vol:
         if self._last_day != today:
             if self._last_day:
                 log.info("═══ S3-VOL NEW DAY — resetting hourly P&L ═══")
+                try:
+                    log_daily_snapshot("research", {
+                        "trades": self.stats.trades, "wins": self.stats.wins,
+                        "losses": self.stats.losses, "pnl": round(self.stats.total_pnl, 2),
+                        "tp_hits": self.stats.tp_hits, "sl_hits": self.stats.sl_hits,
+                        "filtered_out": self.stats.filtered_out,
+                        "filtered_would_win": self.stats.filtered_would_win,
+                        "filtered_would_lose": self.stats.filtered_would_lose,
+                        "choppy_would_win": self.stats.choppy_would_win,
+                        "choppy_would_lose": self.stats.choppy_would_lose,
+                        "noleader_would_win": self.stats.noleader_would_win,
+                        "noleader_would_lose": self.stats.noleader_would_lose,
+                        "hourly_pnl": str(self.stats.hourly_pnl),
+                    })
+                except Exception as e:
+                    log.warning("Failed to log daily snapshot: %s", e)
             self.stats.hourly_pnl = {}
             self._last_day = today
 

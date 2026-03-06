@@ -18,6 +18,15 @@ from bot.polymarket import PolymarketClient
 from bot.strategy3 import Strategy3
 from bot.pnl_store import PnLStore
 
+def _get_strategy_class(name: str):
+    if name == "vol":
+        from bot.strategy3_vol import Strategy3Vol
+        return Strategy3Vol
+    if name == "scalp":
+        from bot.strategy_scalp import StrategyScalp
+        return StrategyScalp
+    return Strategy3
+
 
 def setup_logging():
     fmt = "%(asctime)s [%(name)-12s] %(levelname)-7s %(message)s"
@@ -31,7 +40,7 @@ def parse_time(s: str):
     return int(parts[0]), int(parts[1])
 
 
-async def main(port: int, live: bool, trade_start: str, trade_end: str, pnl_file: str):
+async def main(port: int, live: bool, trade_start: str, trade_end: str, pnl_file: str, strategy: str = "", bot_name: str = "test"):
     setup_logging()
     log = logging.getLogger("main")
 
@@ -59,10 +68,14 @@ async def main(port: int, live: bool, trade_start: str, trade_end: str, pnl_file
         log.info("  Loss emails -> %s", cfg.email_to)
     log.info("=" * 50)
 
+    StratClass = _get_strategy_class(strategy)
     poly = PolymarketClient()
     await poly.start()
-    strat3 = Strategy3(poly, trade_hours=trade_hours,
-                       pnl_store=pnl_store, email_on_loss=email_on_loss)
+
+    kwargs = dict(trade_hours=trade_hours, pnl_store=pnl_store, email_on_loss=email_on_loss)
+    if StratClass is Strategy3:
+        kwargs["bot_name"] = bot_name
+    strat3 = StratClass(poly, **kwargs)
 
     shutdown_event = asyncio.Event()
 
@@ -104,10 +117,13 @@ def cli():
     parser.add_argument("--trade-start", type=str, default="", help="Start time EST (HH:MM)")
     parser.add_argument("--trade-end", type=str, default="", help="End time EST (HH:MM)")
     parser.add_argument("--pnl-file", type=str, default="pnl_data.json", help="PnL data file")
+    parser.add_argument("--strategy", type=str, default="", help="Strategy variant (e.g. 'vol')")
+    parser.add_argument("--bot-name", type=str, default="test", help="Bot name for trade history (test/official)")
     args = parser.parse_args()
     asyncio.run(main(port=args.port, live=args.live,
                       trade_start=args.trade_start, trade_end=args.trade_end,
-                      pnl_file=args.pnl_file))
+                      pnl_file=args.pnl_file, strategy=args.strategy,
+                      bot_name=args.bot_name))
 
 
 if __name__ == "__main__":

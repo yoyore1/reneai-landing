@@ -122,12 +122,52 @@ LAUNCHER_HTML = """<!DOCTYPE html>
     <div class="meta" id="meta-official"></div>
     <div class="log-box" id="log-official"></div>
   </div>
+
+  <!-- RESEARCH BOT -->
+  <div class="card" style="border-color:#a855f720">
+    <div class="logo">&#128300;</div>
+    <h2>S3 Volume Research</h2>
+    <div class="subtitle">Dry run + depth logging &middot; Port 9003</div>
+    <div class="tag" style="background:rgba(168,85,247,0.12);color:#a855f7;border:1px solid rgba(168,85,247,0.2)">RESEARCH</div>
+    <div id="status-research" class="status-box stopped">
+      <span class="dot off" id="dot-research"></span>
+      <span id="txt-research">Stopped</span>
+    </div>
+    <div class="actions">
+      <button class="btn-start" id="start-research" onclick="api('research','start')">Start Research</button>
+      <button class="btn-stop" id="stop-research" onclick="api('research','stop')" disabled>Stop Research</button>
+      <a class="btn-dash hidden" id="dash-research" href="" target="_blank">Open Dashboard &#8594;</a>
+    </div>
+    <div class="meta" id="meta-research"></div>
+    <div class="log-box" id="log-research"></div>
+  </div>
+
+  <!-- SCALP BOT -->
+  <div class="card" style="border-color:#f9731620">
+    <div class="logo">&#9889;</div>
+    <h2>Scalp Bot</h2>
+    <div class="subtitle">Quick in/out &middot; TP 80c SL 58c &middot; Time stop 45s &middot; Port 9004</div>
+    <div class="tag" style="background:rgba(249,115,22,0.12);color:#f97316;border:1px solid rgba(249,115,22,0.2)">SCALP DRY</div>
+    <div id="status-scalp" class="status-box stopped">
+      <span class="dot off" id="dot-scalp"></span>
+      <span id="txt-scalp">Stopped</span>
+    </div>
+    <div class="actions">
+      <button class="btn-start" id="start-scalp" onclick="api('scalp','start')">Start Scalp</button>
+      <button class="btn-stop" id="stop-scalp" onclick="api('scalp','stop')" disabled>Stop Scalp</button>
+      <a class="btn-dash hidden" id="dash-scalp" href="" target="_blank">Open Dashboard &#8594;</a>
+    </div>
+    <div class="meta" id="meta-scalp"></div>
+    <div class="log-box" id="log-scalp"></div>
+  </div>
 </div>
 <script>
 function poll() {
   fetch('/api/status').then(r=>r.json()).then(d => {
     render('test', d.test);
     render('official', d.official);
+    if(d.research) render('research', d.research);
+    if(d.scalp) render('scalp', d.scalp);
     if(d.balance!==undefined){
       document.getElementById('balance').textContent='$'+parseFloat(d.balance).toFixed(2);
       document.getElementById('balance').style.color=parseFloat(d.balance)>0?'#22c55e':'#ef4444';
@@ -308,12 +348,25 @@ class LauncherServer:
         self._port = port
         self._balance_checker = BalanceChecker()
         self._bots = {
-            "test": BotProcess("test", ["--port", "9001", "--pnl-file", "pnl_test.json"], port=9001),
+            "test": BotProcess("test", ["--port", "9001", "--pnl-file", "pnl_test.json",
+                                        "--bot-name", "test"], port=9001),
             "official": BotProcess(
                 "official",
                 ["--port", "9002", "--live", "--trade-start", "00:20", "--trade-end", "07:00",
-                 "--pnl-file", "pnl_official.json"],
+                 "--pnl-file", "pnl_official.json", "--bot-name", "official"],
                 port=9002,
+            ),
+            "research": BotProcess(
+                "research",
+                ["--port", "9003", "--strategy", "vol", "--pnl-file", "pnl_research.json",
+                 "--bot-name", "research"],
+                port=9003,
+            ),
+            "scalp": BotProcess(
+                "scalp",
+                ["--port", "9004", "--strategy", "scalp", "--pnl-file", "pnl_scalp.json",
+                 "--bot-name", "scalp"],
+                port=9004,
             ),
         }
         self._app = web.Application()

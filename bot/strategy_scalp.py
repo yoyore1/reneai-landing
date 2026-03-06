@@ -24,6 +24,7 @@ from typing import Optional, List, Dict, Set
 
 from bot.config import cfg
 from bot.polymarket import PolymarketClient, Market
+from bot.trade_history import log_scalp_trade, log_daily_snapshot
 
 log = logging.getLogger("scalp")
 
@@ -368,6 +369,10 @@ class StrategyScalp:
             pos.pnl, pos.market.question[:40],
         )
         self._persist_trade(pos.pnl, is_win)
+        try:
+            log_scalp_trade(pos)
+        except Exception as e:
+            log.warning("Failed to log scalp trade to history: %s", e)
         if not is_win and self._email_on_loss:
             self._send_loss_email(pos, reason)
 
@@ -391,6 +396,10 @@ class StrategyScalp:
         )
         is_win = pos.pnl >= 0
         self._persist_trade(pos.pnl, is_win)
+        try:
+            log_scalp_trade(pos)
+        except Exception as e:
+            log.warning("Failed to log scalp trade to history: %s", e)
         if not is_win and self._email_on_loss:
             self._send_loss_email(pos, reason)
 
@@ -418,6 +427,17 @@ class StrategyScalp:
         if self._last_day != today:
             if self._last_day:
                 log.info("═══ SCALP NEW DAY — resetting hourly P&L ═══")
+                try:
+                    log_daily_snapshot("scalp", {
+                        "trades": self.stats.trades, "wins": self.stats.wins,
+                        "losses": self.stats.losses, "pnl": round(self.stats.total_pnl, 2),
+                        "tp_hits": self.stats.tp_hits, "sl_hits": self.stats.sl_hits,
+                        "time_stops": self.stats.time_stops,
+                        "skipped_choppy": self.stats.skipped_choppy,
+                        "hourly_pnl": str(self.stats.hourly_pnl),
+                    })
+                except Exception as e:
+                    log.warning("Failed to log daily snapshot: %s", e)
             self.stats.hourly_pnl = {}
             self._last_day = today
 

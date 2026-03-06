@@ -25,10 +25,12 @@ from typing import Optional, List, Dict, Set
 
 from bot.config import cfg
 from bot.polymarket import PolymarketClient, Market
+from bot.trade_history import log_s3_trade, log_daily_snapshot
 
 log = logging.getLogger("strategy3")
 
 BUY_THRESHOLD = 0.70
+BUY_MAX_PRICE = 0.90
 SKIP_THRESHOLD = 0.60
 ANALYSIS_START = 240.0      # start tracking highs at 4:00 remaining
 BUY_WINDOW_START = 180.0    # can buy from 3:00 remaining
@@ -83,7 +85,7 @@ class S3WindowTracker:
 class Strategy3:
 
     def __init__(self, poly: PolymarketClient, trade_hours=None,
-                 pnl_store=None, email_on_loss=False):
+                 pnl_store=None, email_on_loss=False, bot_name="test"):
         """
         trade_hours: optional (start_hour, start_min, end_hour, end_min) in EST.
         pnl_store: PnLStore instance for persisting PnL data.
@@ -95,6 +97,7 @@ class Strategy3:
         self._closed: List[S3Position] = []
         self.pnl_store = pnl_store
         self._email_on_loss = email_on_loss
+        self._bot_name = bot_name
         self.trade_size = USDC_PER_TRADE
         self._trackers: Dict[str, S3WindowTracker] = {}
         self._decided_cids: Set[str] = set()
@@ -192,11 +195,9 @@ class Strategy3:
                     )
 
                 # Buy window: 3:00 to 1:00 remaining
-                in_cooldown = now < self._cooldown_until
                 if (remaining <= BUY_WINDOW_START and
                         not tracker.bought and
                         not tracker.choppy and
-                        not in_cooldown and
                         trading_ok):
                     up_now = up_bid or 0
                     down_now = down_bid or 0
@@ -204,10 +205,10 @@ class Strategy3:
                     buy_side = None
                     buy_token = ""
 
-                    if up_now >= BUY_THRESHOLD and up_now >= down_now:
+                    if up_now >= BUY_THRESHOLD and up_now <= BUY_MAX_PRICE and up_now >= down_now:
                         buy_side = "Up"
                         buy_token = mkt.yes_token_id
-                    elif down_now >= BUY_THRESHOLD and down_now >= up_now:
+                    elif down_now >= BUY_THRESHOLD and down_now <= BUY_MAX_PRICE and down_now >= up_now:
                         buy_side = "Down"
                         buy_token = mkt.no_token_id
 
@@ -220,10 +221,7 @@ class Strategy3:
                 self._decided_cids.add(cid)
                 self.stats.markets_analyzed += 1
 
-                if now < self._cooldown_until:
-                    self.stats.last_action = "SKIP COOLDOWN (loss recovery)"
-                    log.info("S3 SKIP COOLDOWN: %s", mkt.question[:40])
-                elif tracker.choppy:
+                if tracker.choppy:
                     self.stats.skipped_choppy += 1
                     self.stats.last_action = (
                         f"SKIP CHOPPY (Up={tracker.up_high:.2f} Down={tracker.down_high:.2f})"
@@ -250,6 +248,16 @@ class Strategy3:
             return
 
         result = await self.poly.buy(mkt, side_str, self.trade_size)
+
+        if not result.filled and not cfg.dry_run:
+            log.warning("[S3] BUY FAILED — order not filled, skipping %s", mkt.question[:40])
+            tracker.bought = True
+            tracker.finalized = True
+            self._decided_cids.add(mkt.condition_id)
+            self.stats.markets_analyzed += 1
+            self.stats.last_action = f"BUY FAILED (not filled) | {mkt.question[:30]}"
+            return
+
         entry = result.avg_entry if result.avg_entry > 0 else ask
         qty = result.qty if result.qty > 0 else math.floor((self.trade_size / ask) * 100) / 100
 
@@ -279,27 +287,27 @@ class Strategy3:
 
             bid = await self.poly._get_best_bid(pos.token_id)
             if bid is None:
-                # If window ended and we can't get a bid, resolve
                 if pos.market.window_end and now > pos.market.window_end + 10:
                     self._close_position(pos, 0.0, "resolved-unknown")
                 continue
 
-            # TP: bid >= 94c
-            if bid >= TP_PRICE:
-                await self._sell_position(pos, bid, "tp")
-                continue
-
-            # SL: bid <= 28c
-            if bid <= SL_PRICE:
-                await self._sell_position(pos, bid, "sl")
-                continue
-
-            # Resolution: window ended
-            if pos.market.window_end and now > pos.market.window_end:
+            # Resolution FIRST: if market ended, don't try to CLOB-sell
+            if pos.market.window_end and now > pos.market.window_end - 5:
                 if bid > 0.5:
                     self._close_position(pos, 1.0, "resolved-win")
                 else:
                     self._close_position(pos, 0.0, "resolved-loss")
+                continue
+
+            # TP: bid >= 94c (only while market is active)
+            if bid >= TP_PRICE:
+                await self._sell_position(pos, bid, "tp")
+                continue
+
+            # SL: bid <= 28c (only while market is active)
+            if bid <= SL_PRICE:
+                await self._sell_position(pos, bid, "sl")
+                continue
 
     async def _sell_position(self, pos: S3Position, bid: float, reason: str):
         """Actively sell at current bid (TP or SL)."""
@@ -316,8 +324,12 @@ class Strategy3:
                 avg_entry=pos.entry_price,
                 entry_time=pos.entry_time,
             )
-            success = await self.poly.sell(temp)
+            success = await self.poly.sell(temp, reason=reason)
             if not success:
+                if pos.market.window_end and time.time() > pos.market.window_end - 10:
+                    log.warning("S3 sell failed near/after market end — closing as resolution")
+                    self._close_position(pos, bid, f"resolved-{reason}")
+                    return
                 log.warning("S3 sell failed for %s %s, will retry", reason.upper(), pos.side)
                 return
             pos.exit_price = temp.exit_price or bid
@@ -344,11 +356,12 @@ class Strategy3:
             pos.pnl, pos.market.question[:40],
         )
         self._persist_trade(pos.pnl, is_win)
-        if not is_win:
-            self._cooldown_until = time.time() + 300
-            log.info("S3 COOLDOWN: skipping next 5-min window after loss")
-            if self._email_on_loss:
-                self._send_loss_email(pos, reason)
+        try:
+            log_s3_trade(pos, bot_name=self._bot_name)
+        except Exception as e:
+            log.warning("Failed to log trade to history: %s", e)
+        if not is_win and self._email_on_loss:
+            self._send_loss_email(pos, reason)
 
     def _close_position(self, pos: S3Position, exit_price: float, reason: str):
         """Close a position at resolution (no active sell needed)."""
@@ -370,11 +383,12 @@ class Strategy3:
         )
         is_win = pos.pnl >= 0
         self._persist_trade(pos.pnl, is_win)
-        if not is_win:
-            self._cooldown_until = time.time() + 300
-            log.info("S3 COOLDOWN: skipping next 5-min window after loss")
-            if self._email_on_loss:
-                self._send_loss_email(pos, reason)
+        try:
+            log_s3_trade(pos, bot_name=self._bot_name)
+        except Exception as e:
+            log.warning("Failed to log trade to history: %s", e)
+        if not is_win and self._email_on_loss:
+            self._send_loss_email(pos, reason)
 
     async def _discover(self):
         markets = await self.poly.find_active_btc_5min_markets()
@@ -400,6 +414,16 @@ class Strategy3:
         if self._last_day != today:
             if self._last_day:
                 log.info("═══ S3 NEW DAY — resetting hourly P&L ═══")
+                try:
+                    log_daily_snapshot(self._bot_name, {
+                        "trades": self.stats.trades, "wins": self.stats.wins,
+                        "losses": self.stats.losses, "pnl": round(self.stats.total_pnl, 2),
+                        "tp_hits": self.stats.tp_hits, "sl_hits": self.stats.sl_hits,
+                        "skipped_choppy": self.stats.skipped_choppy,
+                        "hourly_pnl": str(self.stats.hourly_pnl),
+                    })
+                except Exception as e:
+                    log.warning("Failed to log daily snapshot: %s", e)
             self.stats.hourly_pnl = {}
             self._last_day = today
 
