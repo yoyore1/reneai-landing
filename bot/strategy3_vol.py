@@ -50,6 +50,10 @@ class S3Stats:
     filtered_out: int = 0
     filtered_would_win: int = 0
     filtered_would_lose: int = 0
+    choppy_would_win: int = 0
+    choppy_would_lose: int = 0
+    noleader_would_win: int = 0
+    noleader_would_lose: int = 0
     tp_hits: int = 0
     sl_hits: int = 0
     total_pnl: float = 0.0
@@ -294,13 +298,14 @@ class Strategy3Vol:
                     self.stats.last_action = (
                         f"SKIP CHOPPY (Up={tracker.up_high:.2f} Down={tracker.down_high:.2f})"
                     )
+                    up_spd = (tracker.up_first_70 - tracker.analysis_start_time) if tracker.up_first_70 and tracker.analysis_start_time else 0
+                    dn_spd = (tracker.down_first_70 - tracker.analysis_start_time) if tracker.down_first_70 and tracker.analysis_start_time else 0
                     log.info(
                         "S3-VOL SKIP CHOPPY: %s | Up_high=%.2f No_high=%.2f | "
                         "up_speed_70=%.0fs no_speed_70=%.0fs",
-                        mkt.question[:40], tracker.up_high, tracker.down_high,
-                        (tracker.up_first_70 - tracker.analysis_start_time) if tracker.up_first_70 and tracker.analysis_start_time else 0,
-                        (tracker.down_first_70 - tracker.analysis_start_time) if tracker.down_first_70 and tracker.analysis_start_time else 0,
+                        mkt.question[:40], tracker.up_high, tracker.down_high, up_spd, dn_spd,
                     )
+                    await self._track_skipped_market(mkt, tracker, "choppy", remaining)
                 else:
                     self.stats.skipped_no_leader += 1
                     self.stats.last_action = "SKIP NO LEADER (<1:00 left)"
@@ -308,9 +313,61 @@ class Strategy3Vol:
                         "S3-VOL SKIP NO LEADER: %s | Up_high=%.2f No_high=%.2f",
                         mkt.question[:40], tracker.up_high, tracker.down_high,
                     )
+                    await self._track_skipped_market(mkt, tracker, "no_leader", remaining)
 
         await self._check_positions()
         self._hourly_report()
+
+    async def _track_skipped_market(self, mkt, tracker, skip_reason, remaining):
+        """Create phantom positions for skipped markets to analyze what would have happened."""
+        try:
+            up_vol = await self._get_book_depth(mkt.yes_token_id)
+            dn_vol = await self._get_book_depth(mkt.no_token_id)
+            btc_price = await self._get_btc_price()
+            btc_move = abs(btc_price - tracker.btc_start) if btc_price > 0 and tracker.btc_start > 0 else 0
+
+            up_spd70 = (tracker.up_first_70 - tracker.analysis_start_time) if tracker.up_first_70 and tracker.analysis_start_time else 0
+            dn_spd70 = (tracker.down_first_70 - tracker.analysis_start_time) if tracker.down_first_70 and tracker.analysis_start_time else 0
+
+            # Determine which side was leading at skip time
+            leader = "Up" if tracker.up_high >= tracker.down_high else "Down"
+            leader_token = mkt.yes_token_id if leader == "Up" else mkt.no_token_id
+            leader_price = mkt.yes_ask if leader == "Up" else mkt.no_ask
+            if leader_price <= 0 or leader_price >= 1.0:
+                await self.poly.get_market_prices(mkt)
+                leader_price = mkt.yes_ask if leader == "Up" else mkt.no_ask
+
+            log.info(
+                "  TRACKING SKIPPED (%s): %s | leader=%s up_high=%.2f dn_high=%.2f | "
+                "up_depth=$%.0f dn_depth=$%.0f | btc=$%.0f move=$%.0f",
+                skip_reason, mkt.question[:35], leader, tracker.up_high, tracker.down_high,
+                up_vol["bid_depth_total"], dn_vol["bid_depth_total"], btc_price, btc_move,
+            )
+
+            phantom = S3Position(
+                market=mkt, side=leader, token_id=leader_token,
+                entry_price=round(leader_price, 2) if leader_price > 0 else tracker.up_high if leader == "Up" else tracker.down_high,
+                qty=int(self.trade_size / max(leader_price, 0.01)),
+                spent=0,
+                entry_time=time.time(),
+                status="phantom-open",
+                exit_reason="",
+                vol_snapshot={
+                    "up_depth": up_vol, "down_depth": dn_vol,
+                    "up_high": tracker.up_high, "down_high": tracker.down_high,
+                    "up_speed_70": up_spd70, "down_speed_70": dn_spd70,
+                    "btc_price": btc_price, "btc_move": btc_move,
+                    "remaining": remaining,
+                    "skip_reason": skip_reason,
+                    "avg_spread": sum(tracker.spreads) / len(tracker.spreads) if tracker.spreads else 0,
+                    "prev_side": self._prev_side, "prev_outcome": self._prev_outcome,
+                    "filtered": True,
+                    "filter_reasons": [f"skipped_{skip_reason}"],
+                },
+            )
+            self._phantoms.append(phantom)
+        except Exception as e:
+            log.warning("Failed to track skipped market: %s", e)
 
     async def _execute_buy(self, mkt, tracker, buy_side, buy_token, remaining):
         """Simulated buy with full volume snapshot."""
@@ -475,67 +532,70 @@ class Strategy3Vol:
                 self._close_position(pos, bid, "sl")
                 continue
 
-        # Check phantom (filtered) positions — track what WOULD have happened
-        for ph in self._phantoms:
+        # Check phantom (filtered/skipped) positions — track what WOULD have happened
+        for ph in list(self._phantoms):
             if ph.status != "phantom-open":
                 continue
 
+            reasons = ph.vol_snapshot.get("filter_reasons", []) if ph.vol_snapshot else []
+            skip_type = ph.vol_snapshot.get("skip_reason", "") if ph.vol_snapshot else ""
+            label = "CHOPPY" if skip_type == "choppy" else "NO-LEADER" if skip_type == "no_leader" else "FILTERED"
+
             bid = await self.poly._get_best_bid(ph.token_id)
+            resolved = False
+            won = False
+
             if bid is None:
                 if ph.market.window_end and now > ph.market.window_end + 10:
-                    ph.status = "phantom-resolved"
                     ph.exit_price = 0.0
                     ph.pnl = -ph.entry_price * ph.qty
-                    self.stats.filtered_would_lose += 1
-                    log.info("  ✗ FILTERED WOULD-LOSE (unknown): %s", ph.market.question[:40])
-                    self._closed.append(ph)
-                continue
-
-            if ph.market.window_end and now > ph.market.window_end - 5:
+                    resolved = True
+                    won = False
+                else:
+                    continue
+            elif ph.market.window_end and now > ph.market.window_end - 5:
                 ph.exit_price = 1.0 if bid > 0.5 else 0.0
                 ph.pnl = (ph.exit_price - ph.entry_price) * ph.qty
-                would = "WIN" if ph.pnl >= 0 else "LOSE"
-                ph.status = f"phantom-resolved-{would.lower()}"
-                if ph.pnl >= 0:
-                    self.stats.filtered_would_win += 1
+                resolved = True
+                won = ph.pnl >= 0
+            elif bid >= TP_PRICE:
+                ph.exit_price = bid
+                ph.pnl = (bid - ph.entry_price) * ph.qty
+                resolved = True
+                won = True
+            elif bid <= SL_PRICE:
+                ph.exit_price = bid
+                ph.pnl = (bid - ph.entry_price) * ph.qty
+                resolved = True
+                won = False
+
+            if resolved:
+                result = "WIN" if won else "LOSE"
+                ph.status = f"phantom-{result.lower()}"
+                log.info(
+                    "  ✗ %s WOULD-%s: %s %s $%.2f→$%.2f PnL $%+.2f | %s",
+                    label, result, ph.side, ph.market.question[:30],
+                    ph.entry_price, ph.exit_price or 0, ph.pnl or 0,
+                    " | ".join(reasons),
+                )
+                # Categorize stats
+                if skip_type == "choppy":
+                    if won:
+                        self.stats.choppy_would_win += 1
+                    else:
+                        self.stats.choppy_would_lose += 1
+                elif skip_type == "no_leader":
+                    if won:
+                        self.stats.noleader_would_win += 1
+                    else:
+                        self.stats.noleader_would_lose += 1
                 else:
-                    self.stats.filtered_would_lose += 1
-                reasons = ph.vol_snapshot.get("filter_reasons", []) if ph.vol_snapshot else []
-                log.info(
-                    "  ✗ FILTERED WOULD-%s: %s %s $%.2f→$%.2f PnL $%+.2f | filters: %s",
-                    would, ph.side, ph.market.question[:30],
-                    ph.entry_price, ph.exit_price, ph.pnl, " | ".join(reasons),
-                )
+                    if won:
+                        self.stats.filtered_would_win += 1
+                    else:
+                        self.stats.filtered_would_lose += 1
                 self._closed.append(ph)
-                continue
-
-            if bid >= TP_PRICE:
-                ph.exit_price = bid
-                ph.pnl = (bid - ph.entry_price) * ph.qty
-                ph.status = "phantom-tp"
-                self.stats.filtered_would_win += 1
-                reasons = ph.vol_snapshot.get("filter_reasons", []) if ph.vol_snapshot else []
-                log.info(
-                    "  ✗ FILTERED WOULD-WIN (TP): %s %s $%.2f→$%.2f PnL $%+.2f | filters: %s",
-                    ph.side, ph.market.question[:30],
-                    ph.entry_price, bid, ph.pnl, " | ".join(reasons),
-                )
-                self._closed.append(ph)
-                continue
-
-            if bid <= SL_PRICE:
-                ph.exit_price = bid
-                ph.pnl = (bid - ph.entry_price) * ph.qty
-                ph.status = "phantom-sl"
-                self.stats.filtered_would_lose += 1
-                reasons = ph.vol_snapshot.get("filter_reasons", []) if ph.vol_snapshot else []
-                log.info(
-                    "  ✗ FILTERED WOULD-LOSE (SL): %s %s $%.2f→$%.2f PnL $%+.2f | filters: %s",
-                    ph.side, ph.market.question[:30],
-                    ph.entry_price, bid, ph.pnl, " | ".join(reasons),
-                )
-                self._closed.append(ph)
-                continue
+                self._phantoms.remove(ph)
 
     def _close_position(self, pos: S3Position, exit_price: float, reason: str):
         pos.exit_price = exit_price
@@ -610,10 +670,12 @@ class Strategy3Vol:
             prev_pnl = self.stats.hourly_pnl.get(self._last_hour_key, 0)
             log.info(
                 "═══ S3-VOL HOURLY [%s] ═══  PnL: $%+.2f | Total: $%+.2f | W:%d L:%d | "
-                "Filtered:%d (would_win:%d would_lose:%d)",
+                "Filtered:%d (W:%d L:%d) | Choppy(W:%d L:%d) | NoLead(W:%d L:%d)",
                 self._last_hour_key, prev_pnl, self.stats.total_pnl,
                 self.stats.wins, self.stats.losses,
                 self.stats.filtered_out, self.stats.filtered_would_win, self.stats.filtered_would_lose,
+                self.stats.choppy_would_win, self.stats.choppy_would_lose,
+                self.stats.noleader_would_win, self.stats.noleader_would_lose,
             )
 
         if hour_key not in self.stats.hourly_pnl:

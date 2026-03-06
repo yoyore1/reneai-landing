@@ -172,7 +172,9 @@ function render(d){
     <div class="stat"><div class="label">Choppy</div><div class="val dim">${s.skipped_choppy}</div></div>
     <div class="stat"><div class="label">No Leader</div><div class="val dim">${s.skipped_no_leader}</div></div>
     ${s.time_stops?`<div class="stat"><div class="label">Time Stops</div><div class="val yellow">${s.time_stops}</div></div>`:''}
-    ${s.filtered_out?`<div class="stat"><div class="label">Filtered</div><div class="val yellow">${s.filtered_out} <span style="font-size:11px;color:#555">(W:${s.filtered_would_win} L:${s.filtered_would_lose})</span></div></div>`:''}`;
+    ${s.filtered_out?`<div class="stat"><div class="label">Filtered</div><div class="val yellow">${s.filtered_out} <span style="font-size:11px;color:#555">(W:${s.filtered_would_win} L:${s.filtered_would_lose})</span></div></div>`:''}
+    ${(s.choppy_would_win+s.choppy_would_lose)?`<div class="stat"><div class="label">Choppy Skip</div><div class="val" style="color:#ff9800">${s.choppy_would_win+s.choppy_would_lose} <span style="font-size:11px;color:#555">(W:${s.choppy_would_win} L:${s.choppy_would_lose})</span></div></div>`:''}
+    ${(s.noleader_would_win+s.noleader_would_lose)?`<div class="stat"><div class="label">No-Leader Skip</div><div class="val" style="color:#ff9800">${s.noleader_would_win+s.noleader_would_lose} <span style="font-size:11px;color:#555">(W:${s.noleader_would_win} L:${s.noleader_would_lose})</span></div></div>`:''}`;
   document.getElementById('lastAction').innerHTML=`<strong>Last:</strong> ${s.last_action||'waiting...'}`;
   renderOpen(d.positions);
   renderClosed(d.closed);
@@ -376,6 +378,10 @@ class DashboardServer:
                 "filtered_out": getattr(st, "filtered_out", 0),
                 "filtered_would_win": getattr(st, "filtered_would_win", 0),
                 "filtered_would_lose": getattr(st, "filtered_would_lose", 0),
+                "choppy_would_win": getattr(st, "choppy_would_win", 0),
+                "choppy_would_lose": getattr(st, "choppy_would_lose", 0),
+                "noleader_would_win": getattr(st, "noleader_would_win", 0),
+                "noleader_would_lose": getattr(st, "noleader_would_lose", 0),
                 "wins": st.wins,
                 "losses": st.losses,
                 "pnl": round(st.total_pnl, 2),
