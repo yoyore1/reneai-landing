@@ -170,7 +170,9 @@ function render(d){
     <div class="stat"><div class="label">TP / SL</div><div class="val"><span class="green">${s.tp_hits}</span> / <span class="red">${s.sl_hits}</span></div></div>
     <div class="stat"><div class="label">Analyzed</div><div class="val yellow">${s.analyzed}</div></div>
     <div class="stat"><div class="label">Choppy</div><div class="val dim">${s.skipped_choppy}</div></div>
-    <div class="stat"><div class="label">No Leader</div><div class="val dim">${s.skipped_no_leader}</div></div>`;
+    <div class="stat"><div class="label">No Leader</div><div class="val dim">${s.skipped_no_leader}</div></div>
+    ${s.time_stops?`<div class="stat"><div class="label">Time Stops</div><div class="val yellow">${s.time_stops}</div></div>`:''}
+    ${s.filtered_out?`<div class="stat"><div class="label">Filtered</div><div class="val yellow">${s.filtered_out} <span style="font-size:11px;color:#555">(W:${s.filtered_would_win} L:${s.filtered_would_lose})</span></div></div>`:''}`;
   document.getElementById('lastAction').innerHTML=`<strong>Last:</strong> ${s.last_action||'waiting...'}`;
   renderOpen(d.positions);
   renderClosed(d.closed);
@@ -370,6 +372,10 @@ class DashboardServer:
                 "skipped_no_leader": st.skipped_no_leader,
                 "tp_hits": st.tp_hits,
                 "sl_hits": st.sl_hits,
+                "time_stops": getattr(st, "time_stops", 0),
+                "filtered_out": getattr(st, "filtered_out", 0),
+                "filtered_would_win": getattr(st, "filtered_would_win", 0),
+                "filtered_would_lose": getattr(st, "filtered_would_lose", 0),
                 "wins": st.wins,
                 "losses": st.losses,
                 "pnl": round(st.total_pnl, 2),
