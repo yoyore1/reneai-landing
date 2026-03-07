@@ -175,7 +175,14 @@ function render(d){
     ${s.filtered_out?`<div class="stat"><div class="label">Filtered</div><div class="val yellow">${s.filtered_out} <span style="font-size:11px;color:#555">(W:${s.filtered_would_win} L:${s.filtered_would_lose})</span></div></div>`:''}
     ${(s.choppy_would_win+s.choppy_would_lose)?`<div class="stat"><div class="label">Choppy Skip</div><div class="val" style="color:#ff9800">${s.choppy_would_win+s.choppy_would_lose} <span style="font-size:11px;color:#555">(W:${s.choppy_would_win} L:${s.choppy_would_lose})</span></div></div>`:''}
     ${(s.noleader_would_win+s.noleader_would_lose)?`<div class="stat"><div class="label">No-Leader Skip</div><div class="val" style="color:#ff9800">${s.noleader_would_win+s.noleader_would_lose} <span style="font-size:11px;color:#555">(W:${s.noleader_would_win} L:${s.noleader_would_lose})</span></div></div>`:''}`;
-  document.getElementById('lastAction').innerHTML=`<strong>Last:</strong> ${s.last_action||'waiting...'}`;
+  const vg = s.vol_guard||{};
+  if(vg.btc_range_60m!==undefined){
+    const vgColor = vg.paused ? '#f44336' : '#4caf50';
+    const vgLabel = vg.paused ? 'PAUSED' : 'ACTIVE';
+    document.getElementById('lastAction').innerHTML=`<strong>Last:</strong> ${s.last_action||'waiting...'}<br><span style="color:${vgColor};font-weight:bold">VOL GUARD: ${vgLabel}</span> | BTC 60m: $${vg.btc_range_60m.toFixed(0)} | WR: ${vg.rolling_wr}% | Choppy: ${vg.choppy_rate}%${vg.paused?' | '+vg.reason:''}`;
+  } else {
+    document.getElementById('lastAction').innerHTML=`<strong>Last:</strong> ${s.last_action||'waiting...'}`;
+  }
   renderOpen(d.positions);
   renderClosed(d.closed);
 }
@@ -381,6 +388,7 @@ class DashboardServer:
                 "choppy_would_win": getattr(st, "choppy_would_win", 0),
                 "choppy_would_lose": getattr(st, "choppy_would_lose", 0),
                 "noleader_would_win": getattr(st, "noleader_would_win", 0),
+                "noleader_would_win": getattr(st, "noleader_would_win", 0),
                 "noleader_would_lose": getattr(st, "noleader_would_lose", 0),
                 "wins": st.wins,
                 "losses": st.losses,
@@ -388,6 +396,7 @@ class DashboardServer:
                 "win_rate": round((st.wins / total) * 100, 1) if total > 0 else 0,
                 "last_action": st.last_action,
                 "hourly_pnl": dict(st.hourly_pnl),
+                "vol_guard": getattr(self._strategy, 'vol_guard', None) and self._strategy.vol_guard.status_dict or {},
             },
             "positions": positions,
             "closed": closed,

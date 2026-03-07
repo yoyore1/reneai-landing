@@ -23,7 +23,6 @@ from typing import Optional, List, Dict, Set
 from bot.config import cfg
 from bot.polymarket import PolymarketClient, Market
 from bot.trade_history import log_research_trade, log_daily_snapshot
-from bot.vol_guard import VolatilityGuard
 
 log = logging.getLogger("strategy3_vol")
 
@@ -38,9 +37,9 @@ SL_PRICE = 0.28
 USDC_PER_TRADE = 20.0
 
 # Volume filters — skip trades that don't pass these
-MIN_BID_70PLUS = 100.0       # must have >= $100 on bids at 70c+
+MIN_BID_70PLUS = 200.0       # must have >= $200 on bids at 70c+
 MIN_DEPTH_RATIO = 4.0        # leader depth must be >= 4x the other side
-MIN_BTC_MOVE = 20.0          # BTC must have moved >= $20 since window start
+MIN_BTC_MOVE = 40.0          # BTC must have moved >= $40 since window start
 
 
 @dataclass
@@ -122,7 +121,6 @@ class Strategy3Vol:
         self._last_hour_key = ""
         self._last_day = ""
         self._trade_hours = trade_hours
-        self.vol_guard = VolatilityGuard()
         self._prev_side = ""
         self._prev_outcome = ""
 
@@ -218,8 +216,6 @@ class Strategy3Vol:
             await self._discover()
             self._last_disc = now
 
-        await self.vol_guard.check_btc()
-
         for cid, tracker in list(self._trackers.items()):
             if tracker.finalized:
                 continue
@@ -291,37 +287,7 @@ class Strategy3Vol:
                         buy_token = mkt.no_token_id
 
                     if buy_side:
-                        if self.vol_guard.is_paused:
-                            log.info(
-                                "  VOL GUARD BLOCKED: %s %s @ %.2f | %s",
-                                buy_side, mkt.question[:30], up_now if buy_side == "Up" else down_now,
-                                self.vol_guard.reason,
-                            )
-                            # Still track as phantom for research
-                            tracker.bought = True
-                            tracker.finalized = True
-                            self._decided_cids.add(cid)
-                            self.stats.markets_analyzed += 1
-                            bt = mkt.yes_token_id if buy_side == "Up" else mkt.no_token_id
-                            ask_price = up_now if buy_side == "Up" else down_now
-                            phantom = S3Position(
-                                market=mkt, side=buy_side, token_id=bt,
-                                entry_price=round(ask_price, 2),
-                                qty=int(self.trade_size / max(ask_price, 0.01)),
-                                spent=0, entry_time=time.time(),
-                                status="phantom-open", exit_reason="",
-                                vol_snapshot={
-                                    "remaining": remaining,
-                                    "filtered": True,
-                                    "filter_reasons": [f"vol_guard:{self.vol_guard.reason}"],
-                                    "skip_reason": "",
-                                },
-                            )
-                            self._phantoms.append(phantom)
-                            self.stats.filtered_out += 1
-                            self.stats.last_action = f"VOL GUARD BLOCKED {buy_side}"
-                        else:
-                            await self._execute_buy(mkt, tracker, buy_side, buy_token, remaining)
+                        await self._execute_buy(mkt, tracker, buy_side, buy_token, remaining)
 
             elif remaining <= BUY_WINDOW_END and not tracker.bought and not tracker.finalized:
                 tracker.finalized = True
@@ -340,7 +306,6 @@ class Strategy3Vol:
                         "up_speed_70=%.0fs no_speed_70=%.0fs",
                         mkt.question[:40], tracker.up_high, tracker.down_high, up_spd, dn_spd,
                     )
-                    self.vol_guard.record_market(True)
                     await self._track_skipped_market(mkt, tracker, "choppy", remaining)
                 else:
                     self.stats.skipped_no_leader += 1
@@ -349,7 +314,6 @@ class Strategy3Vol:
                         "S3-VOL SKIP NO LEADER: %s | Up_high=%.2f No_high=%.2f",
                         mkt.question[:40], tracker.up_high, tracker.down_high,
                     )
-                    self.vol_guard.record_market(False)
                     await self._track_skipped_market(mkt, tracker, "no_leader", remaining)
 
         await self._check_positions()
@@ -510,7 +474,6 @@ class Strategy3Vol:
             return
 
         log.info("  ✓ PASSED ALL FILTERS — executing buy")
-        self.vol_guard.record_market(False)
 
         ask_price = round(ask, 2)
         qty = int(self.trade_size / ask_price) if ask_price > 0 else 0
@@ -645,7 +608,6 @@ class Strategy3Vol:
         pos.status = reason
         pos.exit_reason = reason
         is_win = pos.pnl >= 0
-        self.vol_guard.record_trade(is_win)
         if is_win:
             self.stats.wins += 1
         else:

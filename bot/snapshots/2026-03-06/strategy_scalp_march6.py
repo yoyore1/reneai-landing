@@ -5,7 +5,7 @@ Rules:
   - Analyze each 5-min window from 4:00 to 1:00 remaining
   - Track highs; if BOTH sides hit 60c+ → SKIP (choppy)
   - Buy window: 3:00 to 1:30 remaining (need time for price to move)
-    - Buy when one side's bid hits 70c+ (max 72c)
+    - Buy when one side's bid hits 68-70c (max 72c)
   - Exit rules (whichever hits FIRST):
     - TP:  sell when bid >= 84c  (+14c per share)
     - SL:  sell when bid <= 53c  (-17c per share)
@@ -25,11 +25,10 @@ from typing import Optional, List, Dict, Set
 from bot.config import cfg
 from bot.polymarket import PolymarketClient, Market
 from bot.trade_history import log_scalp_trade, log_daily_snapshot
-from bot.vol_guard import VolatilityGuard
 
 log = logging.getLogger("scalp")
 
-BUY_THRESHOLD = 0.70
+BUY_THRESHOLD = 0.68
 BUY_MAX_PRICE = 0.72
 SKIP_THRESHOLD = 0.60
 ANALYSIS_START = 240.0       # start tracking highs at 4:00 remaining
@@ -105,7 +104,6 @@ class StrategyScalp:
         self._last_hour_key = ""
         self._last_day = ""
         self._trade_hours = trade_hours
-        self.vol_guard = VolatilityGuard()
 
     def _is_trading_time(self) -> bool:
         try:
@@ -157,8 +155,7 @@ class StrategyScalp:
             await self._discover()
             self._last_disc = now
 
-        await self.vol_guard.check_btc()
-        trading_ok = self._is_trading_time() and not self.vol_guard.is_paused
+        trading_ok = self._is_trading_time()
 
         for cid, tracker in list(self._trackers.items()):
             if tracker.finalized:
@@ -233,12 +230,10 @@ class StrategyScalp:
                     self.stats.last_action = (
                         f"SKIP CHOPPY (Up={tracker.up_high:.2f} Down={tracker.down_high:.2f})"
                     )
-                    self.vol_guard.record_market(True)
                     log.info("SCALP SKIP CHOPPY: %s", mkt.question[:40])
                 else:
                     self.stats.skipped_no_leader += 1
                     self.stats.last_action = "SKIP NO LEADER (<1:30 left)"
-                    self.vol_guard.record_market(False)
                     log.info("SCALP SKIP NO LEADER: %s", mkt.question[:40])
 
         await self._check_positions()
@@ -354,7 +349,6 @@ class StrategyScalp:
         pos.status = reason
         pos.exit_reason = reason
         is_win = pos.pnl >= 0
-        self.vol_guard.record_trade(is_win)
         if is_win:
             self.stats.wins += 1
         else:
@@ -388,9 +382,7 @@ class StrategyScalp:
         pos.pnl = (exit_price - pos.entry_price) * pos.qty
         pos.status = reason
         pos.exit_reason = reason
-        is_win = pos.pnl >= 0
-        self.vol_guard.record_trade(is_win)
-        if is_win:
+        if pos.pnl >= 0:
             self.stats.wins += 1
         else:
             self.stats.losses += 1
