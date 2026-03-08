@@ -160,6 +160,25 @@ LAUNCHER_HTML = """<!DOCTYPE html>
     <div class="meta" id="meta-scalp"></div>
     <div class="log-box" id="log-scalp"></div>
   </div>
+
+  <!-- RESEARCH V2 BOT -->
+  <div class="card" style="border-color:#06b6d420">
+    <div class="logo">&#128202;</div>
+    <h2>Research V2 (Mar 8)</h2>
+    <div class="subtitle">Time skips + vol guard + streak breaker &middot; No volume filters &middot; Port 9005</div>
+    <div class="tag" style="background:rgba(6,182,212,0.12);color:#06b6d4;border:1px solid rgba(6,182,212,0.2)">RESEARCH V2</div>
+    <div id="status-research_v2" class="status-box stopped">
+      <span class="dot off" id="dot-research_v2"></span>
+      <span id="txt-research_v2">Stopped</span>
+    </div>
+    <div class="actions">
+      <button class="btn-start" id="start-research_v2" onclick="api('research_v2','start')">Start Research V2</button>
+      <button class="btn-stop" id="stop-research_v2" onclick="api('research_v2','stop')" disabled>Stop Research V2</button>
+      <a class="btn-dash hidden" id="dash-research_v2" href="" target="_blank">Open Dashboard &#8594;</a>
+    </div>
+    <div class="meta" id="meta-research_v2"></div>
+    <div class="log-box" id="log-research_v2"></div>
+  </div>
 </div>
 <script>
 function poll() {
@@ -168,6 +187,7 @@ function poll() {
     render('official', d.official);
     if(d.research) render('research', d.research);
     if(d.scalp) render('scalp', d.scalp);
+    if(d.research_v2) render('research_v2', d.research_v2);
     if(d.balance!==undefined){
       document.getElementById('balance').textContent='$'+parseFloat(d.balance).toFixed(2);
       document.getElementById('balance').style.color=parseFloat(d.balance)>0?'#22c55e':'#ef4444';
@@ -367,6 +387,12 @@ class LauncherServer:
                 ["--port", "9004", "--strategy", "scalp", "--pnl-file", "pnl_scalp.json",
                  "--bot-name", "scalp"],
                 port=9004,
+            ),
+            "research_v2": BotProcess(
+                "research_v2",
+                ["--port", "9005", "--strategy", "v2", "--pnl-file", "pnl_research_v2.json",
+                 "--bot-name", "research_v2"],
+                port=9005,
             ),
         }
         self._app = web.Application()

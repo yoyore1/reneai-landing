@@ -396,7 +396,7 @@ class DashboardServer:
                 "win_rate": round((st.wins / total) * 100, 1) if total > 0 else 0,
                 "last_action": st.last_action,
                 "hourly_pnl": dict(st.hourly_pnl),
-                "vol_guard": getattr(self._strategy, 'vol_guard', None) and self._strategy.vol_guard.status_dict or {},
+                "vol_guard": getattr(self._strat3, 'vol_guard', None) and self._strat3.vol_guard.status_dict or {},
             },
             "positions": positions,
             "closed": closed,

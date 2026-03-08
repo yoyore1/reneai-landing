@@ -25,6 +25,9 @@ def _get_strategy_class(name: str):
     if name == "scalp":
         from bot.strategy_scalp import StrategyScalp
         return StrategyScalp
+    if name == "v2":
+        from bot.strategy3_v2 import Strategy3V2
+        return Strategy3V2
     return Strategy3
 
 
