@@ -174,8 +174,9 @@ function render(d){
     ${s.time_stops?`<div class="stat"><div class="label">Time Stops</div><div class="val yellow">${s.time_stops}</div></div>`:''}
     ${s.filtered_out?`<div class="stat"><div class="label">Filtered</div><div class="val yellow">${s.filtered_out} <span style="font-size:11px;color:#555">(W:${s.filtered_would_win} L:${s.filtered_would_lose})</span></div></div>`:''}
     ${(s.choppy_would_win+s.choppy_would_lose)?`<div class="stat"><div class="label">Choppy Skip</div><div class="val" style="color:#ff9800">${s.choppy_would_win+s.choppy_would_lose} <span style="font-size:11px;color:#555">(W:${s.choppy_would_win} L:${s.choppy_would_lose})</span></div></div>`:''}
-    ${(s.noleader_would_win+s.noleader_would_lose)?`<div class="stat"><div class="label">No-Leader Skip</div><div class="val" style="color:#ff9800">${s.noleader_would_win+s.noleader_would_lose} <span style="font-size:11px;color:#555">(W:${s.noleader_would_win} L:${s.noleader_would_lose})</span></div></div>`:''}`;
-  const vg = s.vol_guard||{};
+    ${(s.noleader_would_win+s.noleader_would_lose)?`<div class="stat"><div class="label">No-Leader Skip</div><div class="val" style="color:#ff9800">${s.noleader_would_win+s.noleader_would_lose} <span style="font-size:11px;color:#555">(W:${s.noleader_would_win} L:${s.noleader_would_lose})</span></div></div>`:''}
+    ${s.redeems?`<div class="stat"><div class="label">Auto-Redeemed</div><div class="val green">${s.redeems} <span style="font-size:11px">($${s.usdc_redeemed.toFixed(2)})</span></div></div>`:''}`;
+    const vg = s.vol_guard||{};
   if(vg.btc_range_60m!==undefined){
     const vgColor = vg.paused ? '#f44336' : '#4caf50';
     const vgLabel = vg.paused ? 'PAUSED' : 'ACTIVE';
@@ -388,8 +389,9 @@ class DashboardServer:
                 "choppy_would_win": getattr(st, "choppy_would_win", 0),
                 "choppy_would_lose": getattr(st, "choppy_would_lose", 0),
                 "noleader_would_win": getattr(st, "noleader_would_win", 0),
-                "noleader_would_win": getattr(st, "noleader_would_win", 0),
                 "noleader_would_lose": getattr(st, "noleader_would_lose", 0),
+                "redeems": getattr(st, "redeems", 0),
+                "usdc_redeemed": getattr(st, "usdc_redeemed", 0.0),
                 "wins": st.wins,
                 "losses": st.losses,
                 "pnl": round(st.total_pnl, 2),
@@ -397,6 +399,7 @@ class DashboardServer:
                 "last_action": st.last_action,
                 "hourly_pnl": dict(st.hourly_pnl),
                 "vol_guard": getattr(self._strat3, 'vol_guard', None) and self._strat3.vol_guard.status_dict or {},
+                "manip_guard": getattr(self._strat3, 'manip_guard', None) and self._strat3.manip_guard.status_dict or {},
             },
             "positions": positions,
             "closed": closed,

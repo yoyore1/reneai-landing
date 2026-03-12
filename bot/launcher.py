@@ -108,7 +108,7 @@ LAUNCHER_HTML = """<!DOCTYPE html>
   <div class="card official">
     <div class="logo">&#9670;</div>
     <h2>S3 Official Bot</h2>
-    <div class="subtitle">Live trading &middot; 12:20 AM – 7:00 AM EST &middot; Port 9002</div>
+    <div class="subtitle">Live trading &middot; 24/7 &middot; Tuned Guard V2 &middot; Port 9002</div>
     <div class="tag live">LIVE MONEY</div>
     <div id="status-official" class="status-box stopped">
       <span class="dot off" id="dot-official"></span>
@@ -126,8 +126,8 @@ LAUNCHER_HTML = """<!DOCTYPE html>
   <!-- RESEARCH BOT -->
   <div class="card" style="border-color:#a855f720">
     <div class="logo">&#128300;</div>
-    <h2>S3 Volume Research</h2>
-    <div class="subtitle">Dry run + depth logging &middot; Port 9003</div>
+    <h2>S3 + Manipulation Guard</h2>
+    <div class="subtitle">Dry run + manip detection &middot; Port 9003</div>
     <div class="tag" style="background:rgba(168,85,247,0.12);color:#a855f7;border:1px solid rgba(168,85,247,0.2)">RESEARCH</div>
     <div id="status-research" class="status-box stopped">
       <span class="dot off" id="dot-research"></span>
@@ -142,42 +142,42 @@ LAUNCHER_HTML = """<!DOCTYPE html>
     <div class="log-box" id="log-research"></div>
   </div>
 
-  <!-- SCALP BOT -->
-  <div class="card" style="border-color:#f9731620">
-    <div class="logo">&#9889;</div>
-    <h2>Scalp Bot</h2>
-    <div class="subtitle">Quick in/out &middot; TP 80c SL 58c &middot; Time stop 45s &middot; Port 9004</div>
-    <div class="tag" style="background:rgba(249,115,22,0.12);color:#f97316;border:1px solid rgba(249,115,22,0.2)">SCALP DRY</div>
-    <div id="status-scalp" class="status-box stopped">
-      <span class="dot off" id="dot-scalp"></span>
-      <span id="txt-scalp">Stopped</span>
+  <!-- TUNED GUARD V2 -->
+  <div class="card" style="border-color:#10b98120">
+    <div class="logo">&#128737;</div>
+    <h2>S3 + Tuned Guard V2</h2>
+    <div class="subtitle">Balanced guard &middot; streak&#8805;7 alt&#8805;5 choppy&#8805;40% gate&#8805;78c &middot; Port 9004</div>
+    <div class="tag" style="background:rgba(16,185,129,0.12);color:#10b981;border:1px solid rgba(16,185,129,0.2)">TUNED V2</div>
+    <div id="status-mg2" class="status-box stopped">
+      <span class="dot off" id="dot-mg2"></span>
+      <span id="txt-mg2">Stopped</span>
     </div>
     <div class="actions">
-      <button class="btn-start" id="start-scalp" onclick="api('scalp','start')">Start Scalp</button>
-      <button class="btn-stop" id="stop-scalp" onclick="api('scalp','stop')" disabled>Stop Scalp</button>
-      <a class="btn-dash hidden" id="dash-scalp" href="" target="_blank">Open Dashboard &#8594;</a>
+      <button class="btn-start" id="start-mg2" onclick="api('mg2','start')">Start Tuned V2</button>
+      <button class="btn-stop" id="stop-mg2" onclick="api('mg2','stop')" disabled>Stop Tuned V2</button>
+      <a class="btn-dash hidden" id="dash-mg2" href="" target="_blank">Open Dashboard &#8594;</a>
     </div>
-    <div class="meta" id="meta-scalp"></div>
-    <div class="log-box" id="log-scalp"></div>
+    <div class="meta" id="meta-mg2"></div>
+    <div class="log-box" id="log-mg2"></div>
   </div>
 
-  <!-- RESEARCH V2 BOT -->
+  <!-- TIGHT SL BOT -->
   <div class="card" style="border-color:#06b6d420">
-    <div class="logo">&#128202;</div>
-    <h2>Research V2 (Mar 8)</h2>
-    <div class="subtitle">Time skips + vol guard + streak breaker &middot; No volume filters &middot; Port 9005</div>
-    <div class="tag" style="background:rgba(6,182,212,0.12);color:#06b6d4;border:1px solid rgba(6,182,212,0.2)">RESEARCH V2</div>
-    <div id="status-research_v2" class="status-box stopped">
-      <span class="dot off" id="dot-research_v2"></span>
-      <span id="txt-research_v2">Stopped</span>
+    <div class="logo">&#128171;</div>
+    <h2>S3 Tight SL (45c)</h2>
+    <div class="subtitle">Same S3 strategy &middot; SL raised to 45c &middot; Tick logging &middot; Port 9005</div>
+    <div class="tag" style="background:rgba(6,182,212,0.12);color:#06b6d4;border:1px solid rgba(6,182,212,0.2)">TIGHT SL</div>
+    <div id="status-tight_sl" class="status-box stopped">
+      <span class="dot off" id="dot-tight_sl"></span>
+      <span id="txt-tight_sl">Stopped</span>
     </div>
     <div class="actions">
-      <button class="btn-start" id="start-research_v2" onclick="api('research_v2','start')">Start Research V2</button>
-      <button class="btn-stop" id="stop-research_v2" onclick="api('research_v2','stop')" disabled>Stop Research V2</button>
-      <a class="btn-dash hidden" id="dash-research_v2" href="" target="_blank">Open Dashboard &#8594;</a>
+      <button class="btn-start" id="start-tight_sl" onclick="api('tight_sl','start')">Start Tight SL</button>
+      <button class="btn-stop" id="stop-tight_sl" onclick="api('tight_sl','stop')" disabled>Stop Tight SL</button>
+      <a class="btn-dash hidden" id="dash-tight_sl" href="" target="_blank">Open Dashboard &#8594;</a>
     </div>
-    <div class="meta" id="meta-research_v2"></div>
-    <div class="log-box" id="log-research_v2"></div>
+    <div class="meta" id="meta-tight_sl"></div>
+    <div class="log-box" id="log-tight_sl"></div>
   </div>
 </div>
 <script>
@@ -186,8 +186,8 @@ function poll() {
     render('test', d.test);
     render('official', d.official);
     if(d.research) render('research', d.research);
-    if(d.scalp) render('scalp', d.scalp);
-    if(d.research_v2) render('research_v2', d.research_v2);
+    if(d.mg2) render('mg2', d.mg2);
+    if(d.tight_sl) render('tight_sl', d.tight_sl);
     if(d.balance!==undefined){
       document.getElementById('balance').textContent='$'+parseFloat(d.balance).toFixed(2);
       document.getElementById('balance').style.color=parseFloat(d.balance)>0?'#22c55e':'#ef4444';
@@ -369,29 +369,29 @@ class LauncherServer:
         self._balance_checker = BalanceChecker()
         self._bots = {
             "test": BotProcess("test", ["--port", "9001", "--pnl-file", "pnl_test.json",
-                                        "--bot-name", "test"], port=9001),
+                                        "--bot-name", "test", "--no-skip-noleader"], port=9001),
             "official": BotProcess(
                 "official",
-                ["--port", "9002", "--live", "--trade-start", "00:20", "--trade-end", "07:00",
+                ["--port", "9002", "--live", "--strategy", "mg2",
                  "--pnl-file", "pnl_official.json", "--bot-name", "official"],
                 port=9002,
             ),
             "research": BotProcess(
                 "research",
-                ["--port", "9003", "--strategy", "vol", "--pnl-file", "pnl_research.json",
+                ["--port", "9003", "--strategy", "mg", "--pnl-file", "pnl_research.json",
                  "--bot-name", "research"],
                 port=9003,
             ),
-            "scalp": BotProcess(
-                "scalp",
-                ["--port", "9004", "--strategy", "scalp", "--pnl-file", "pnl_scalp.json",
-                 "--bot-name", "scalp"],
+            "mg2": BotProcess(
+                "mg2",
+                ["--port", "9004", "--strategy", "mg2", "--pnl-file", "pnl_mg2.json",
+                 "--bot-name", "mg2"],
                 port=9004,
             ),
-            "research_v2": BotProcess(
-                "research_v2",
-                ["--port", "9005", "--strategy", "v2", "--pnl-file", "pnl_research_v2.json",
-                 "--bot-name", "research_v2"],
+            "tight_sl": BotProcess(
+                "tight_sl",
+                ["--port", "9005", "--pnl-file", "pnl_tight_sl.json",
+                 "--bot-name", "tight_sl", "--no-skip-noleader", "--sl", "0.45"],
                 port=9005,
             ),
         }

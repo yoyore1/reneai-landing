@@ -39,6 +39,7 @@ SCALP_COLS = [
 TEST_COLS = [
     "timestamp", "est_time", "market", "side", "type",
     "entry_price", "exit_price", "qty", "pnl", "exit_reason",
+    "filter_reason",
 ]
 
 _locks = {}
@@ -163,7 +164,7 @@ def log_scalp_trade(pos, bot_name="scalp"):
 
 
 def log_s3_trade(pos, bot_name="test"):
-    """Log an S3 bot trade (test or official)."""
+    """Log an S3 bot trade (test or official), including phantoms."""
     try:
         from zoneinfo import ZoneInfo
     except ImportError:
@@ -173,18 +174,28 @@ def log_s3_trade(pos, bot_name="test"):
     lock = _get_lock(bot_name)
 
     now = datetime.now(ZoneInfo("America/New_York"))
+    is_phantom = "phantom" in (pos.status or "")
+    filter_reason = getattr(pos, "filter_reason", "")
+
+    if is_phantom and filter_reason:
+        trade_type = f"phantom-{filter_reason}"
+    elif is_phantom:
+        trade_type = "phantom"
+    else:
+        trade_type = "real"
 
     row = {
         "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
         "est_time": now.strftime("%I:%M:%S %p"),
         "market": getattr(pos.market, "question", ""),
         "side": pos.side,
-        "type": "real",
+        "type": trade_type,
         "entry_price": pos.entry_price,
         "exit_price": pos.exit_price or 0,
         "qty": pos.qty,
         "pnl": round(pos.pnl, 2) if pos.pnl else 0,
         "exit_reason": pos.exit_reason or pos.status or "",
+        "filter_reason": filter_reason,
     }
 
     with lock:

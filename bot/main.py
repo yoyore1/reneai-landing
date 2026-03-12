@@ -28,6 +28,12 @@ def _get_strategy_class(name: str):
     if name == "v2":
         from bot.strategy3_v2 import Strategy3V2
         return Strategy3V2
+    if name == "mg":
+        from bot.strategy3_mg import Strategy3MG
+        return Strategy3MG
+    if name == "mg2":
+        from bot.strategy3_mg import Strategy3MG
+        return Strategy3MG
     return Strategy3
 
 
@@ -43,7 +49,7 @@ def parse_time(s: str):
     return int(parts[0]), int(parts[1])
 
 
-async def main(port: int, live: bool, trade_start: str, trade_end: str, pnl_file: str, strategy: str = "", bot_name: str = "test"):
+async def main(port: int, live: bool, trade_start: str, trade_end: str, pnl_file: str, strategy: str = "", bot_name: str = "test", skip_no_leader: bool = True, sl_price: float = None):
     setup_logging()
     log = logging.getLogger("main")
 
@@ -78,6 +84,22 @@ async def main(port: int, live: bool, trade_start: str, trade_end: str, pnl_file
     kwargs = dict(trade_hours=trade_hours, pnl_store=pnl_store, email_on_loss=email_on_loss)
     if StratClass is Strategy3:
         kwargs["bot_name"] = bot_name
+        kwargs["skip_no_leader"] = skip_no_leader
+        if sl_price is not None:
+            kwargs["sl_price"] = sl_price
+    from bot.strategy3_mg import Strategy3MG
+    if StratClass is Strategy3MG:
+        kwargs["bot_name"] = bot_name
+        if sl_price is not None:
+            kwargs["sl_price"] = sl_price
+        if strategy == "mg2":
+            kwargs["guard_config"] = {
+                "win_streak_threshold": 7,
+                "alternation_threshold": 5,
+                "choppy_rate_threshold": 0.40,
+                "cooldown_markets": 1,
+            }
+            kwargs["entry_gate"] = 0.78
     strat3 = StratClass(poly, **kwargs)
 
     shutdown_event = asyncio.Event()
@@ -122,11 +144,15 @@ def cli():
     parser.add_argument("--pnl-file", type=str, default="pnl_data.json", help="PnL data file")
     parser.add_argument("--strategy", type=str, default="", help="Strategy variant (e.g. 'vol')")
     parser.add_argument("--bot-name", type=str, default="test", help="Bot name for trade history (test/official)")
+    parser.add_argument("--no-skip-noleader", action="store_true", help="Disable skip-no-leader (buy even when no side hits 70c)")
+    parser.add_argument("--sl", type=float, default=None, help="Stop loss price (e.g. 0.45 for 45c)")
     args = parser.parse_args()
     asyncio.run(main(port=args.port, live=args.live,
                       trade_start=args.trade_start, trade_end=args.trade_end,
                       pnl_file=args.pnl_file, strategy=args.strategy,
-                      bot_name=args.bot_name))
+                      bot_name=args.bot_name,
+                      skip_no_leader=not args.no_skip_noleader,
+                      sl_price=args.sl))
 
 
 if __name__ == "__main__":

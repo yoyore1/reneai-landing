@@ -1,18 +1,12 @@
 """
-Strategy 3: Late Momentum — Buy the Leader
+Strategy 3 + Manipulation Guard (MG)
 
-Rules:
-  - Analyze each 5-min window from 4:00 to 1:00 remaining
-  - Track the highest bid Up and Down reach during that analysis window
-  - If BOTH sides hit 60c+ during analysis → SKIP (choppy)
-  - Buy window: 3:00 to 1:00 remaining
-    - As soon as one side's bid is 70c+ → BUY that side
-    - Only one buy per window
-  - If buy window ends (≤1:00 left) without buying → SKIP NO LEADER
-  - Position management:
-    - TP: sell when bid ≥ 94c
-    - SL: sell when bid ≤ 28c
-    - If neither hits before resolution → resolve at $1 or $0
+Same core logic as test bot (S3 Late Momentum) with:
+  - No skip-no-leader (buys the leader even if <70c)
+  - Manipulation Guard: dynamically detects manipulation via
+    side alternation, hot streaks, and choppy rate — pauses
+    trading and tracks phantoms when triggered
+  - Full phantom tracking for choppy, no-leader, and manip-guard skips
 """
 
 import asyncio
@@ -26,16 +20,17 @@ from typing import Optional, List, Dict, Set
 from bot.config import cfg
 from bot.polymarket import PolymarketClient, Market
 from bot.trade_history import log_s3_trade, log_daily_snapshot
+from bot.manip_guard import ManipulationGuard
 from bot.data_logger import DataLogger
 
-log = logging.getLogger("strategy3")
+log = logging.getLogger("strategy3_mg")
 
 BUY_THRESHOLD = 0.70
 BUY_MAX_PRICE = 0.90
 SKIP_THRESHOLD = 0.60
-ANALYSIS_START = 240.0      # start tracking highs at 4:00 remaining
-BUY_WINDOW_START = 180.0    # can buy from 3:00 remaining
-BUY_WINDOW_END = 60.0       # stop buying at 1:00 remaining
+ANALYSIS_START = 240.0
+BUY_WINDOW_START = 180.0
+BUY_WINDOW_END = 60.0
 TP_PRICE = 0.94
 SL_PRICE = 0.28
 USDC_PER_TRADE = 20.0
@@ -47,6 +42,7 @@ class S3Stats:
     trades: int = 0
     skipped_choppy: int = 0
     skipped_no_leader: int = 0
+    skipped_manip: int = 0
     tp_hits: int = 0
     sl_hits: int = 0
     total_pnl: float = 0.0
@@ -59,6 +55,8 @@ class S3Stats:
     choppy_would_lose: int = 0
     noleader_would_win: int = 0
     noleader_would_lose: int = 0
+    manip_would_win: int = 0
+    manip_would_lose: int = 0
     redeems: int = 0
     usdc_redeemed: float = 0.0
 
@@ -66,7 +64,7 @@ class S3Stats:
 @dataclass
 class S3Position:
     market: Market
-    side: str          # "Up" or "Down"
+    side: str
     token_id: str
     entry_price: float
     qty: float
@@ -90,11 +88,12 @@ class S3WindowTracker:
     finalized: bool = False
 
 
-class Strategy3:
+class Strategy3MG:
 
     def __init__(self, poly: PolymarketClient, trade_hours=None,
-                 pnl_store=None, email_on_loss=False, bot_name="test",
-                 skip_no_leader=True, sl_price=None):
+                 pnl_store=None, email_on_loss=False, bot_name="research",
+                 guard_config: dict = None, entry_gate: float = 1.0,
+                 sl_price=None):
         self.poly = poly
         self.stats = S3Stats()
         self._positions: List[S3Position] = []
@@ -103,7 +102,6 @@ class Strategy3:
         self.pnl_store = pnl_store
         self._email_on_loss = email_on_loss
         self._bot_name = bot_name
-        self._skip_no_leader = skip_no_leader
         self._sl_price = sl_price if sl_price is not None else SL_PRICE
         self.trade_size = USDC_PER_TRADE
         self._trackers: Dict[str, S3WindowTracker] = {}
@@ -112,7 +110,8 @@ class Strategy3:
         self._last_hour_key = ""
         self._last_day = ""
         self._trade_hours = trade_hours
-        self._cooldown_until: float = 0
+        self._entry_gate = entry_gate
+        self.manip_guard = ManipulationGuard(**(guard_config or {}))
         self._last_redeem_check: float = 0
         self._data_logger = DataLogger(bot_name)
 
@@ -135,20 +134,16 @@ class Strategy3:
     async def run(self):
         self._running = True
         log.info(
-            "S3 started | buy>=%.0fc | choppy>=%.0fc | TP>=%.0fc | SL<=%.0fc | "
-            "analyze 4:00→1:00 | buy 3:00→1:00",
+            "S3+MG started | buy>=%.0fc | choppy>=%.0fc | TP>=%.0fc | SL<=%.0fc | "
+            "analyze 4:00-1:00 | buy 3:00-1:00 | NO skip-no-leader | MANIP GUARD ON",
             BUY_THRESHOLD * 100, SKIP_THRESHOLD * 100,
             TP_PRICE * 100, self._sl_price * 100,
         )
-        log.info("S3 skip-no-leader: %s", "ON" if self._skip_no_leader else "OFF (will buy leader)")
-        if self._trade_hours:
-            sh, sm, eh, em = self._trade_hours
-            log.info("S3 trading hours: %02d:%02d → %02d:%02d EST", sh, sm, eh, em)
         while self._running:
             try:
                 await self._tick()
             except Exception as exc:
-                log.error("S3 tick error: %s", exc, exc_info=True)
+                log.error("S3+MG tick error: %s", exc, exc_info=True)
             await asyncio.sleep(1)
 
     def stop(self):
@@ -183,7 +178,7 @@ class Strategy3:
             if remaining <= ANALYSIS_START and remaining > BUY_WINDOW_END:
                 if not tracker.analyzing:
                     tracker.analyzing = True
-                    log.info("S3: Analyzing %s (%.0fs left)", mkt.question[:40], remaining)
+                    log.info("S3+MG: Analyzing %s (%.0fs left)", mkt.question[:40], remaining)
 
                 up_bid = await self.poly._get_best_bid(mkt.yes_token_id)
                 down_bid = await self.poly._get_best_bid(mkt.no_token_id)
@@ -208,7 +203,7 @@ class Strategy3:
                         not tracker.choppy):
                     tracker.choppy = True
                     log.info(
-                        "S3 CHOPPY: %s (Up high=%.2f Down high=%.2f)",
+                        "S3+MG CHOPPY: %s (Up=%.2f Down=%.2f)",
                         mkt.question[:35], tracker.up_high, tracker.down_high,
                     )
 
@@ -230,7 +225,17 @@ class Strategy3:
                         buy_token = mkt.no_token_id
 
                     if buy_side:
-                        await self._execute_buy(mkt, tracker, buy_side, buy_token, remaining)
+                        buy_price = up_now if buy_side == "Up" else down_now
+                        skip, reason = self.manip_guard.should_skip(
+                            entry_price=buy_price, entry_gate=self._entry_gate)
+                        if skip:
+                            self._create_manip_phantom(mkt, tracker, buy_side, buy_token, reason)
+                            btc_now = await self._data_logger.fetch_btc_price()
+                            self._data_logger.log_skipped(
+                                mkt.question, "manip_guard", tracker.up_high,
+                                tracker.down_high, btc_now)
+                        else:
+                            await self._execute_buy(mkt, tracker, buy_side, buy_token, remaining)
 
             elif remaining <= BUY_WINDOW_END and not tracker.bought and not tracker.finalized:
                 tracker.finalized = True
@@ -243,33 +248,35 @@ class Strategy3:
                     self.stats.last_action = (
                         f"SKIP CHOPPY (Up={tracker.up_high:.2f} Down={tracker.down_high:.2f})"
                     )
-                    log.info("S3 SKIP CHOPPY: %s", mkt.question[:40])
+                    log.info("S3+MG SKIP CHOPPY: %s", mkt.question[:40])
                     self._create_skip_phantom(mkt, tracker, "choppy")
                     self._data_logger.log_skipped(
                         mkt.question, "choppy", tracker.up_high, tracker.down_high, btc)
-                elif self._skip_no_leader:
-                    self.stats.skipped_no_leader += 1
-                    self.stats.last_action = "SKIP NO LEADER (<1:00 left)"
-                    log.info("S3 SKIP NO LEADER: %s", mkt.question[:40])
-                    self._create_skip_phantom(mkt, tracker, "no_leader")
-                    self._data_logger.log_skipped(
-                        mkt.question, "no_leader", tracker.up_high, tracker.down_high, btc)
                 else:
                     leader = "Up" if tracker.up_high >= tracker.down_high else "Down"
                     leader_token = mkt.yes_token_id if leader == "Up" else mkt.no_token_id
                     leader_price = tracker.up_high if leader == "Up" else tracker.down_high
                     if leader_price > 0 and leader_price <= BUY_MAX_PRICE:
-                        log.info(
-                            "S3 NO-LEADER BUY: %s %s @ ~%.2f (no-skip mode)",
-                            leader, mkt.question[:35], leader_price,
-                        )
-                        tracker.finalized = False
-                        await self._execute_buy(mkt, tracker, leader, leader_token, remaining)
+                        skip, reason = self.manip_guard.should_skip(
+                            entry_price=leader_price, entry_gate=self._entry_gate)
+                        if skip:
+                            self._create_manip_phantom(mkt, tracker, leader, leader_token, reason)
+                            self._data_logger.log_skipped(
+                                mkt.question, "manip_guard", tracker.up_high, tracker.down_high, btc)
+                        else:
+                            log.info(
+                                "S3+MG NO-LEADER BUY: %s %s @ ~%.2f",
+                                leader, mkt.question[:35], leader_price,
+                            )
+                            tracker.finalized = False
+                            await self._execute_buy(mkt, tracker, leader, leader_token, remaining)
                     else:
                         self.stats.skipped_no_leader += 1
                         self.stats.last_action = "SKIP NO LEADER (price out of range)"
-                        log.info("S3 SKIP NO LEADER (price out of range): %s", mkt.question[:40])
+                        log.info("S3+MG SKIP NO LEADER (price out of range): %s", mkt.question[:40])
                         self._create_skip_phantom(mkt, tracker, "no_leader")
+                        self._data_logger.log_skipped(
+                            mkt.question, "no_leader", tracker.up_high, tracker.down_high, btc)
 
         await self._check_positions()
         await self._auto_redeem_check()
@@ -289,15 +296,41 @@ class Strategy3:
                 self.stats.redeems += result["redeemed"]
                 self.stats.usdc_redeemed += result["usdc_recovered"]
                 log.info(
-                    "[S3] Auto-redeemed %d positions → $%.2f USDC (session total: $%.2f)",
+                    "[S3+MG] Auto-redeemed %d positions → $%.2f USDC (session total: $%.2f)",
                     result["redeemed"], result["usdc_recovered"],
                     self.stats.usdc_redeemed,
                 )
         except Exception as exc:
-            log.warning("[S3] Auto-redeem error: %s", exc)
+            log.warning("[S3+MG] Auto-redeem error: %s", exc)
+
+    def _create_manip_phantom(self, mkt, tracker, buy_side, buy_token, reason):
+        """Skip a trade due to manipulation guard — track as phantom."""
+        tracker.bought = True
+        tracker.finalized = True
+        self._decided_cids.add(mkt.condition_id)
+        self.stats.markets_analyzed += 1
+        self.stats.skipped_manip += 1
+        self.stats.last_action = f"MANIP GUARD SKIP: {reason}"
+
+        entry_price = tracker.up_high if buy_side == "Up" else tracker.down_high
+        if entry_price <= 0:
+            entry_price = 0.50
+        qty = int(self.trade_size / max(entry_price, 0.01))
+
+        phantom = S3Position(
+            market=mkt, side=buy_side, token_id=buy_token,
+            entry_price=round(entry_price, 2),
+            qty=qty, spent=0, entry_time=time.time(),
+            status="phantom-open", exit_reason="",
+            filter_reason="manip_guard",
+        )
+        self._phantoms.append(phantom)
+        log.warning(
+            "  MANIP GUARD SKIP: would buy %s @ $%.2f | %s | %s",
+            buy_side, entry_price, mkt.question[:30], reason,
+        )
 
     def _create_skip_phantom(self, mkt, tracker, skip_reason: str):
-        """Create a phantom position for a skipped market to track what would have happened."""
         leader = "Up" if tracker.up_high >= tracker.down_high else "Down"
         leader_token = mkt.yes_token_id if leader == "Up" else mkt.no_token_id
         leader_price = tracker.up_high if leader == "Up" else tracker.down_high
@@ -313,13 +346,11 @@ class Strategy3:
         )
         self._phantoms.append(phantom)
         log.info(
-            "  PHANTOM (%s): tracking %s %s @ $%.2f | %s",
-            skip_reason, leader, mkt.question[:30],
-            leader_price, f"up_high={tracker.up_high:.2f} dn_high={tracker.down_high:.2f}",
+            "  PHANTOM (%s): tracking %s %s @ $%.2f",
+            skip_reason, leader, mkt.question[:30], leader_price,
         )
 
     async def _execute_buy(self, mkt, tracker, buy_side, buy_token, remaining):
-        """Place a buy order."""
         side_str = "YES" if buy_side == "Up" else "NO"
 
         await self.poly.get_market_prices(mkt)
@@ -333,7 +364,7 @@ class Strategy3:
         result = await self.poly.buy(mkt, side_str, self.trade_size)
 
         if not result.filled and not cfg.dry_run:
-            log.warning("[S3] BUY FAILED — order not filled, skipping %s", mkt.question[:40])
+            log.warning("[S3+MG] BUY FAILED — order not filled, skipping %s", mkt.question[:40])
             tracker.bought = True
             tracker.finalized = True
             self._decided_cids.add(mkt.condition_id)
@@ -358,7 +389,7 @@ class Strategy3:
         self.stats.trades += 1
         self.stats.last_action = f"BUY {buy_side} @ ${entry:.3f} | {mkt.question[:30]}"
         log.info(
-            "[S3] BUY %s %.1f @ $%.3f ($%.2f) | %.0fs left | %s",
+            "[S3+MG] BUY %s %.1f @ $%.3f ($%.2f) | %.0fs left | %s",
             buy_side, qty, entry, pos.spent, remaining, mkt.question[:45],
         )
 
@@ -440,7 +471,7 @@ class Strategy3:
             if resolved:
                 result = "WIN" if won else "LOSE"
                 ph.status = f"phantom-{result.lower()}"
-                label = "CHOPPY" if ph.filter_reason == "choppy" else "NO-LEADER"
+                label = ph.filter_reason.upper().replace("_", " ")
                 log.info(
                     "  PHANTOM WOULD-%s (%s): %s %s $%.2f->$%.2f PnL $%+.2f",
                     result, label, ph.side, ph.market.question[:30],
@@ -451,11 +482,21 @@ class Strategy3:
                         self.stats.choppy_would_win += 1
                     else:
                         self.stats.choppy_would_lose += 1
+                    self.manip_guard.record_market(ph.side, won, ph.pnl or 0, was_choppy=True)
                 elif ph.filter_reason == "no_leader":
                     if won:
                         self.stats.noleader_would_win += 1
                     else:
                         self.stats.noleader_would_lose += 1
+                    self.manip_guard.record_market(ph.side, won, ph.pnl or 0, was_noleader=True)
+                elif ph.filter_reason == "manip_guard":
+                    if won:
+                        self.stats.manip_would_win += 1
+                    else:
+                        self.stats.manip_would_lose += 1
+                    self.manip_guard.record_phantom(won)
+                    self.manip_guard.record_market(ph.side, won, ph.pnl or 0)
+
                 self._closed.append(ph)
                 self._phantoms.remove(ph)
                 try:
@@ -464,7 +505,6 @@ class Strategy3:
                     log.warning("Failed to log phantom to history: %s", e)
 
     async def _sell_position(self, pos: S3Position, bid: float, reason: str):
-        """Actively sell at current bid (TP or SL)."""
         if cfg.dry_run:
             pos.exit_price = bid
             pos.pnl = (bid - pos.entry_price) * pos.qty
@@ -481,10 +521,10 @@ class Strategy3:
             success = await self.poly.sell(temp, reason=reason)
             if not success:
                 if pos.market.window_end and time.time() > pos.market.window_end - 10:
-                    log.warning("S3 sell failed near/after market end — closing as resolution")
+                    log.warning("S3+MG sell failed near market end — closing as resolution")
                     self._close_position(pos, bid, f"resolved-{reason}")
                     return
-                log.warning("S3 sell failed for %s %s, will retry", reason.upper(), pos.side)
+                log.warning("S3+MG sell failed for %s %s, will retry", reason.upper(), pos.side)
                 return
             pos.exit_price = temp.exit_price or bid
             pos.pnl = temp.pnl if temp.pnl is not None else (pos.exit_price - pos.entry_price) * pos.qty
@@ -505,25 +545,24 @@ class Strategy3:
         self.stats.last_action = f"{reason.upper()} {pos.side} @ ${pos.exit_price:.3f} PnL ${pos.pnl:+.2f}"
         self._closed.append(pos)
         log.info(
-            "[S3] %s %s @ $%.3f → $%.3f | PnL $%+.2f | %s",
+            "[S3+MG] %s %s @ $%.3f -> $%.3f | PnL $%+.2f | %s",
             reason.upper(), pos.side, pos.entry_price, pos.exit_price,
             pos.pnl, pos.market.question[:40],
         )
         self._persist_trade(pos.pnl, is_win)
+        self.manip_guard.record_market(pos.side, is_win, pos.pnl)
         try:
             log_s3_trade(pos, bot_name=self._bot_name)
         except Exception as e:
             log.warning("Failed to log trade to history: %s", e)
-        if not is_win and self._email_on_loss:
-            self._send_loss_email(pos, reason)
 
     def _close_position(self, pos: S3Position, exit_price: float, reason: str):
-        """Close a position at resolution (no active sell needed)."""
         pos.exit_price = exit_price
         pos.pnl = (exit_price - pos.entry_price) * pos.qty
         pos.status = reason
         pos.exit_reason = reason
-        if pos.pnl >= 0:
+        is_win = pos.pnl >= 0
+        if is_win:
             self.stats.wins += 1
         else:
             self.stats.losses += 1
@@ -532,17 +571,15 @@ class Strategy3:
         self.stats.last_action = f"RESOLVED {pos.side} ${pos.pnl:+.2f}"
         self._closed.append(pos)
         log.info(
-            "[S3] RESOLVED %s: $%.2f → PnL $%+.2f | %s",
+            "[S3+MG] RESOLVED %s: $%.2f -> PnL $%+.2f | %s",
             pos.side, exit_price, pos.pnl, pos.market.question[:45],
         )
-        is_win = pos.pnl >= 0
         self._persist_trade(pos.pnl, is_win)
+        self.manip_guard.record_market(pos.side, is_win, pos.pnl)
         try:
             log_s3_trade(pos, bot_name=self._bot_name)
         except Exception as e:
             log.warning("Failed to log trade to history: %s", e)
-        if not is_win and self._email_on_loss:
-            self._send_loss_email(pos, reason)
 
     async def _discover(self):
         markets = await self.poly.find_active_btc_5min_markets()
@@ -572,17 +609,22 @@ class Strategy3:
 
         if self._last_day != today:
             if self._last_day:
-                log.info("═══ S3 NEW DAY — resetting hourly P&L ═══")
+                log.info("=== S3+MG NEW DAY — resetting hourly P&L ===")
                 try:
+                    mg = self.manip_guard.status_dict
                     log_daily_snapshot(self._bot_name, {
                         "trades": self.stats.trades, "wins": self.stats.wins,
                         "losses": self.stats.losses, "pnl": round(self.stats.total_pnl, 2),
                         "tp_hits": self.stats.tp_hits, "sl_hits": self.stats.sl_hits,
                         "skipped_choppy": self.stats.skipped_choppy,
+                        "skipped_manip": self.stats.skipped_manip,
                         "choppy_would_win": self.stats.choppy_would_win,
                         "choppy_would_lose": self.stats.choppy_would_lose,
                         "noleader_would_win": self.stats.noleader_would_win,
                         "noleader_would_lose": self.stats.noleader_would_lose,
+                        "manip_would_win": self.stats.manip_would_win,
+                        "manip_would_lose": self.stats.manip_would_lose,
+                        "manip_total_pauses": mg["total_pauses"],
                         "hourly_pnl": str(self.stats.hourly_pnl),
                     })
                 except Exception as e:
@@ -592,11 +634,14 @@ class Strategy3:
 
         if hour_key != self._last_hour_key and self._last_hour_key:
             prev_pnl = self.stats.hourly_pnl.get(self._last_hour_key, 0)
+            mg = self.manip_guard.status_dict
             log.info(
-                "═══ S3 HOURLY [%s] ═══  PnL: $%+.2f | Total: $%+.2f | W:%d L:%d TP:%d SL:%d",
+                "=== S3+MG HOURLY [%s] ===  PnL: $%+.2f | Total: $%+.2f | W:%d L:%d | "
+                "ManipSkips:%d (W:%d L:%d) | Guard: %s",
                 self._last_hour_key, prev_pnl, self.stats.total_pnl,
                 self.stats.wins, self.stats.losses,
-                self.stats.tp_hits, self.stats.sl_hits,
+                self.stats.skipped_manip, self.stats.manip_would_win, self.stats.manip_would_lose,
+                "PAUSED" if mg["paused"] else "ACTIVE",
             )
 
         if hour_key not in self.stats.hourly_pnl:
@@ -606,41 +651,6 @@ class Strategy3:
     def _persist_trade(self, pnl: float, is_win: bool):
         if self.pnl_store:
             self.pnl_store.record_trade(pnl, is_win)
-
-    def _send_loss_email(self, pos: S3Position, reason: str):
-        import threading
-        threading.Thread(target=self._email_worker, args=(pos, reason), daemon=True).start()
-
-    def _email_worker(self, pos: S3Position, reason: str):
-        try:
-            import smtplib
-            from email.mime.text import MIMEText
-            subject = f"S3 LOSS: {reason.upper()} {pos.side} ${pos.pnl:+.2f}"
-            body = (
-                f"Trade Loss Alert\n"
-                f"{'='*40}\n"
-                f"Side:    {pos.side}\n"
-                f"Entry:   ${pos.entry_price:.3f}\n"
-                f"Exit:    ${pos.exit_price:.3f}\n"
-                f"Qty:     {pos.qty:.1f}\n"
-                f"PnL:     ${pos.pnl:+.2f}\n"
-                f"Reason:  {reason.upper()}\n"
-                f"Market:  {pos.market.question}\n"
-                f"{'='*40}\n"
-                f"Total PnL: ${self.stats.total_pnl:+.2f}\n"
-                f"W/L: {self.stats.wins}/{self.stats.losses}\n"
-            )
-            msg = MIMEText(body)
-            msg["Subject"] = subject
-            msg["From"] = cfg.email_from
-            msg["To"] = cfg.email_to
-            with smtplib.SMTP(cfg.smtp_host, cfg.smtp_port) as s:
-                s.starttls()
-                s.login(cfg.email_user, cfg.email_password)
-                s.sendmail(cfg.email_from, cfg.email_to, msg.as_string())
-            log.info("Loss email sent: %s", subject)
-        except Exception as exc:
-            log.warning("Failed to send loss email: %s", exc)
 
     @property
     def open_positions(self) -> List[S3Position]:

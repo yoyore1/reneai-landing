@@ -1,0 +1,17 @@
+[Unit]
+Description=S3 Late Bot (Test Mode - dry run, all day)
+After=network.target
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/home/ec2-user/reneai-landing
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -m bot.main --headless --test
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/home/ec2-user/reneai-landing/test_bot.log
+StandardError=append:/home/ec2-user/reneai-landing/test_bot.log
+
+[Install]
+WantedBy=multi-user.target

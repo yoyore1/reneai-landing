@@ -109,14 +109,24 @@ class PolymarketClient:
                 api_secret=cfg.poly_api_secret,
                 api_passphrase=cfg.poly_api_passphrase,
             )
-            self._clob_client = ClobClient(
-                cfg.poly_clob_host,
+
+            client_kwargs = dict(
                 key=cfg.poly_private_key,
                 chain_id=cfg.chain_id,
                 creds=creds,
             )
+            if cfg.poly_signature_type:
+                client_kwargs["signature_type"] = cfg.poly_signature_type
+            if cfg.poly_funder_address:
+                client_kwargs["funder"] = cfg.poly_funder_address
+
+            self._clob_client = ClobClient(cfg.poly_clob_host, **client_kwargs)
             self._api_creds_loaded = True
-            log.info("Polymarket CLOB client initialised (LIVE mode)")
+            log.info(
+                "Polymarket CLOB client initialised (LIVE mode) sig_type=%s funder=%s",
+                cfg.poly_signature_type,
+                cfg.poly_funder_address[:10] + "..." if cfg.poly_funder_address else "none",
+            )
         except Exception as exc:
             log.error("Failed to init CLOB client: %s -- falling back to DRY_RUN", exc)
             cfg.dry_run = True
@@ -274,14 +284,19 @@ class PolymarketClient:
             log.warning("Bad ask price %.4f for %s %s, skipping", ask_price, side, market.condition_id[:8])
             return Position(market=market, side=side, token_id=token_id)
 
-        qty = usdc_amount / ask_price
-        qty = math.floor(qty * 100) / 100  # round down to 2 decimals
+        ask_price = round(ask_price, 2)
+        qty = int(usdc_amount / ask_price)
+        if qty <= 0:
+            log.warning("Qty rounds to 0 for price %.4f, skipping", ask_price)
+            return Position(market=market, side=side, token_id=token_id)
+
+        actual_cost = round(qty * ask_price, 2)
 
         pos = Position(
             market=market,
             side=side,
             token_id=token_id,
-            qty=qty,
+            qty=float(qty),
             avg_entry=ask_price,
             entry_time=time.time(),
         )
@@ -290,44 +305,87 @@ class PolymarketClient:
             pos.filled = True
             pos.order_id = f"DRY-{int(time.time()*1000)}"
             log.info(
-                "[DRY] BUY %s %.2f shares @ $%.4f ($%.2f) | %s",
-                side, qty, ask_price, usdc_amount, market.question[:60],
+                "[DRY] BUY %s %d shares @ $%.2f ($%.2f) | %s",
+                side, qty, ask_price, actual_cost, market.question[:60],
             )
             return pos
 
-        # --- Live order via py-clob-client ---
+        # --- Live order (aggressive limit to sweep asks) ---
         try:
             from py_clob_client.clob_types import OrderArgs, OrderType
             from py_clob_client.order_builder.constants import BUY
+            import asyncio
 
+            limit_price = min(round(ask_price + 0.05, 2), 0.99)
             order_args = OrderArgs(
-                price=ask_price,
-                size=qty,
+                price=limit_price,
+                size=float(qty),
                 side=BUY,
                 token_id=token_id,
+            )
+            log.info(
+                "[LIVE] Submitting BUY %s %d shares | ask=$%.2f limit=$%.2f ($%.2f) | token=%s...",
+                side, qty, ask_price, limit_price, actual_cost, token_id[:16],
             )
             signed = self._clob_client.create_order(order_args)
             result = self._clob_client.post_order(signed, OrderType.GTC)
             pos.order_id = result.get("orderID", result.get("id", ""))
-            pos.filled = result.get("status", "") == "matched"
+            status = result.get("status", "")
+            pos.filled = status == "matched"
             log.info(
-                "[LIVE] BUY %s %.2f shares @ $%.4f | order=%s status=%s",
-                side, qty, ask_price, pos.order_id, result.get("status"),
+                "[LIVE] BUY posted: status=%s order=%s | full=%s",
+                status, pos.order_id, result,
             )
+
+            if not pos.filled and pos.order_id:
+                await asyncio.sleep(3)
+                try:
+                    order_info = self._clob_client.get_order(pos.order_id)
+                    live_status = order_info.get("status", "")
+                    size_matched = float(order_info.get("size_matched", "0"))
+                    log.info("[LIVE] BUY check after 3s: status=%s matched=%.2f", live_status, size_matched)
+                    if size_matched >= qty * 0.9:
+                        pos.filled = True
+                        pos.qty = size_matched
+                        log.info("[LIVE] BUY FILLED (%.1f shares matched)", size_matched)
+                    else:
+                        self._clob_client.cancel(pos.order_id)
+                        log.warning("[LIVE] BUY NOT FILLED after 3s — cancelled (matched=%.1f/%d)", size_matched, qty)
+                        pos.filled = False
+                except Exception as check_exc:
+                    log.warning("[LIVE] BUY status check failed: %s — cancelling", check_exc)
+                    try:
+                        self._clob_client.cancel(pos.order_id)
+                    except Exception:
+                        pass
+                    pos.filled = False
         except Exception as exc:
             log.error("Buy order failed: %s", exc, exc_info=True)
 
+        # After a successful buy, update CLOB's record of our conditional token allowance
+        if pos.filled and not cfg.dry_run:
+            try:
+                from py_clob_client.clob_types import BalanceAllowanceParams
+                params = BalanceAllowanceParams(
+                    asset_type="CONDITIONAL",
+                    token_id=token_id,
+                    signature_type=cfg.poly_signature_type,
+                )
+                self._clob_client.update_balance_allowance(params)
+                log.info("[LIVE] Updated CONDITIONAL allowance for token %s...", token_id[:16])
+            except Exception as exc:
+                log.warning("Failed to update conditional allowance: %s", exc)
+
         return pos
 
-    async def sell(self, position: Position) -> bool:
+    async def sell(self, position: Position, reason: str = "") -> bool:
         """
-        Market-sell an existing position.
-        Returns True if the sell was submitted / simulated.
+        Market-sell an existing position in two batches to avoid Polymarket
+        balance tracking issues: sell (qty-2) first, then sell the remaining 2.
         """
         if position.qty <= 0:
             return False
 
-        # Fetch current bid price
         bid_price = await self._get_best_bid(position.token_id)
         if bid_price is None or bid_price <= 0:
             log.warning("No bid available for %s, cannot sell", position.token_id[:8])
@@ -344,28 +402,95 @@ class PolymarketClient:
             )
             return True
 
-        # --- Live sell ---
+        # --- Live sell (split into two batches) ---
         try:
-            from py_clob_client.clob_types import OrderArgs, OrderType
+            from py_clob_client.clob_types import OrderArgs, OrderType, BalanceAllowanceParams
             from py_clob_client.order_builder.constants import SELL
+            import asyncio
 
-            order_args = OrderArgs(
-                price=bid_price,
-                size=position.qty,
-                side=SELL,
-                token_id=position.token_id,
-            )
-            signed = self._clob_client.create_order(order_args)
-            result = self._clob_client.post_order(signed, OrderType.GTC)
-            pnl = (bid_price - position.avg_entry) * position.qty
-            position.exit_price = bid_price
-            position.pnl = pnl
-            log.info(
-                "[LIVE] SELL %s %.2f shares @ $%.4f | order=%s PnL=$%.2f",
-                position.side, position.qty, bid_price,
-                result.get("orderID", ""), pnl,
-            )
-            return True
+            try:
+                params = BalanceAllowanceParams(
+                    asset_type="CONDITIONAL",
+                    token_id=position.token_id,
+                    signature_type=cfg.poly_signature_type,
+                )
+                self._clob_client.update_balance_allowance(params)
+            except Exception:
+                pass
+
+            total_qty = int(position.qty)
+            if total_qty <= 0:
+                total_qty = 1
+
+            if reason == "sl":
+                limit_price = 0.01
+            else:
+                limit_price = max(round(bid_price - 0.05, 2), 0.01)
+
+            # Split: sell (qty - 2) first, then 1, then whatever is left
+            first_qty = max(total_qty - 2, 1)
+            leftover = total_qty - first_qty
+            second_qty = min(1, leftover)
+            third_qty = leftover - second_qty
+            total_matched = 0.0
+
+            for batch_idx, qty in enumerate([first_qty, second_qty, third_qty]):
+                if qty <= 0:
+                    continue
+                label = f"batch{batch_idx + 1}"
+                log.info(
+                    "[LIVE] SELL %s %s %d shares | bid=$%.2f limit=$%.2f | token=%s...",
+                    label, position.side, qty, bid_price, limit_price, position.token_id[:16],
+                )
+                order_args = OrderArgs(
+                    price=limit_price,
+                    size=float(qty),
+                    side=SELL,
+                    token_id=position.token_id,
+                )
+                try:
+                    signed = self._clob_client.create_order(order_args)
+                    result = self._clob_client.post_order(signed, OrderType.GTC)
+                    order_id = result.get("orderID", result.get("id", ""))
+                    status = result.get("status", "")
+
+                    if status == "matched":
+                        total_matched += qty
+                        log.info("[LIVE] SELL %s FILLED %d shares", label, qty)
+                    elif order_id:
+                        await asyncio.sleep(2)
+                        try:
+                            info = self._clob_client.get_order(order_id)
+                            matched = float(info.get("size_matched", "0"))
+                            total_matched += matched
+                            if matched < qty * 0.5:
+                                try:
+                                    self._clob_client.cancel(order_id)
+                                except Exception:
+                                    pass
+                            log.info("[LIVE] SELL %s matched=%.1f/%d", label, matched, qty)
+                        except Exception:
+                            pass
+                except Exception as exc:
+                    log.warning("[LIVE] SELL %s failed: %s", label, exc)
+
+                if batch_idx < 2 and (second_qty > 0 or third_qty > 0):
+                    await asyncio.sleep(1)
+
+            if total_matched >= first_qty * 0.8:
+                fill_price = bid_price
+                pnl = (fill_price - position.avg_entry) * total_matched
+                position.exit_price = fill_price
+                position.pnl = pnl
+                log.info(
+                    "[LIVE] SELL COMPLETE %s %.0f/%.0f shares @ ~$%.2f | PnL=$%.2f",
+                    position.side, total_matched, float(total_qty), fill_price, pnl,
+                )
+                return True
+            else:
+                log.warning("[LIVE] SELL INCOMPLETE — only %.0f/%d matched", total_matched, total_qty)
+                return False
+
         except Exception as exc:
             log.error("Sell order failed: %s", exc, exc_info=True)
             return False
@@ -383,6 +508,156 @@ class PolymarketClient:
         except Exception as exc:
             log.warning("Bid fetch failed: %s", exc)
         return None
+
+    async def get_book_depth(self, token_id: str, depth_range: float = 0.05) -> dict:
+        """
+        Fetch order book and return summary: best bid, total bid liquidity
+        within `depth_range` of best bid (default 5c).
+        Returns {"bid": float, "depth": float} or {"bid": 0, "depth": 0}.
+        """
+        try:
+            url = f"{cfg.poly_clob_host}/book"
+            params = {"token_id": token_id}
+            async with self._session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                book = await resp.json()
+            bids = book.get("bids", [])
+            if not bids:
+                return {"bid": 0, "depth": 0}
+            best_price = max(float(b["price"]) for b in bids)
+            total_depth = sum(
+                float(b.get("size", 0))
+                for b in bids
+                if float(b["price"]) >= best_price - depth_range
+            )
+            return {"bid": best_price, "depth": round(total_depth, 1)}
+        except Exception:
+            return {"bid": 0, "depth": 0}
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Auto-redeem: sweep resolved/leftover tokens back to USDC
+    # ------------------------------------------------------------------
+
+    async def auto_redeem(self) -> dict:
+        """
+        Query Polymarket data-api for redeemable positions (resolved wins
+        and leftover dust) on the funder address, then sell them at $0.99
+        on the CLOB to convert back to USDC.
+        """
+        if cfg.dry_run or not cfg.poly_funder_address or not self._clob_client:
+            return {"redeemed": 0, "usdc_recovered": 0.0}
+
+        try:
+            url = "https://data-api.polymarket.com/positions"
+            params = {
+                "user": cfg.poly_funder_address,
+                "redeemable": "true",
+                "limit": "100",
+            }
+            async with self._session.get(
+                url, params=params,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                positions = await resp.json()
+
+            if not positions or not isinstance(positions, list):
+                return {"redeemed": 0, "usdc_recovered": 0.0}
+
+            redeemed = 0
+            usdc_recovered = 0.0
+
+            for pos_data in positions:
+                token_id = pos_data.get("asset", "")
+                raw_size = float(pos_data.get("size", 0))
+                if not token_id or raw_size <= 0:
+                    continue
+
+                qty = int(raw_size)
+                if qty <= 0:
+                    continue
+
+                title = (pos_data.get("title") or pos_data.get("question")
+                         or token_id[:16])
+
+                try:
+                    from py_clob_client.clob_types import (
+                        OrderArgs, OrderType, BalanceAllowanceParams,
+                    )
+                    from py_clob_client.order_builder.constants import SELL
+
+                    try:
+                        ba = BalanceAllowanceParams(
+                            asset_type="CONDITIONAL",
+                            token_id=token_id,
+                            signature_type=cfg.poly_signature_type,
+                        )
+                        self._clob_client.update_balance_allowance(ba)
+                    except Exception:
+                        pass
+
+                    order_args = OrderArgs(
+                        price=0.99,
+                        size=float(qty),
+                        side=SELL,
+                        token_id=token_id,
+                    )
+
+                    log.info(
+                        "[REDEEM] Selling %d redeemable tokens @ $0.99 | %s",
+                        qty, str(title)[:50],
+                    )
+                    signed = self._clob_client.create_order(order_args)
+                    result = self._clob_client.post_order(signed, OrderType.GTC)
+                    status = result.get("status", "")
+                    order_id = result.get("orderID", result.get("id", ""))
+
+                    if status == "matched":
+                        usdc = qty * 0.99
+                        usdc_recovered += usdc
+                        redeemed += 1
+                        log.info(
+                            "[REDEEM] OK — %d tokens → $%.2f USDC | %s",
+                            qty, usdc, str(title)[:40],
+                        )
+                    elif order_id:
+                        await asyncio.sleep(3)
+                        try:
+                            info = self._clob_client.get_order(order_id)
+                            matched = float(info.get("size_matched", "0"))
+                            if matched > 0:
+                                usdc = matched * 0.99
+                                usdc_recovered += usdc
+                                redeemed += 1
+                                log.info(
+                                    "[REDEEM] Partial %d/%d tokens → $%.2f | %s",
+                                    int(matched), qty, usdc, str(title)[:40],
+                                )
+                            try:
+                                self._clob_client.cancel(order_id)
+                            except Exception:
+                                pass
+                        except Exception:
+                            try:
+                                self._clob_client.cancel(order_id)
+                            except Exception:
+                                pass
+
+                except Exception as exc:
+                    log.warning("[REDEEM] Failed for %s: %s", str(title)[:30], exc)
+
+            if redeemed > 0:
+                log.info(
+                    "[REDEEM] Sweep complete: %d positions → $%.2f USDC recovered",
+                    redeemed, usdc_recovered,
+                )
+            return {"redeemed": redeemed, "usdc_recovered": round(usdc_recovered, 2)}
+
+        except Exception as exc:
+            log.warning("[REDEEM] Sweep check failed: %s", exc)
+            return {"redeemed": 0, "usdc_recovered": 0.0}
 
     # ------------------------------------------------------------------
     # Helpers
