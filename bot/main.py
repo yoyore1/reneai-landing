@@ -31,7 +31,7 @@ def _get_strategy_class(name: str):
     if name == "mg":
         from bot.strategy3_mg import Strategy3MG
         return Strategy3MG
-    if name == "mg2":
+    if name in ("mg2", "mg2r"):
         from bot.strategy3_mg import Strategy3MG
         return Strategy3MG
     return Strategy3
@@ -90,9 +90,10 @@ async def main(port: int, live: bool, trade_start: str, trade_end: str, pnl_file
     from bot.strategy3_mg import Strategy3MG
     if StratClass is Strategy3MG:
         kwargs["bot_name"] = bot_name
+        kwargs["skip_no_leader"] = skip_no_leader
         if sl_price is not None:
             kwargs["sl_price"] = sl_price
-        if strategy == "mg2":
+        if strategy in ("mg2", "mg2r"):
             kwargs["guard_config"] = {
                 "win_streak_threshold": 7,
                 "alternation_threshold": 5,

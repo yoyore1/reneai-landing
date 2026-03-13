@@ -40,6 +40,9 @@ TEST_COLS = [
     "timestamp", "est_time", "market", "side", "type",
     "entry_price", "exit_price", "qty", "pnl", "exit_reason",
     "filter_reason",
+    "ask_at_buy", "bid_at_sell_trigger",
+    "btc_at_entry", "btc_at_exit",
+    "other_side_high", "reversal_detected",
 ]
 
 _locks = {}
@@ -52,11 +55,26 @@ def _get_lock(name: str) -> threading.Lock:
 
 
 def _ensure_csv(path: Path, columns: list):
-    """Create CSV with header if it doesn't exist."""
+    """Create CSV or upgrade header if new columns were added."""
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", newline="") as f:
             csv.writer(f).writerow(columns)
+        return
+    with open(path, "r") as f:
+        existing = f.readline().strip().split(",")
+    if len(existing) < len(columns):
+        bak = path.with_suffix(".pre_upgrade.csv")
+        if not bak.exists():
+            import shutil
+            shutil.copy2(path, bak)
+            log.info("Backed up %s -> %s before header upgrade", path, bak)
+        with open(path, "r") as f:
+            all_lines = f.readlines()
+        with open(path, "w", newline="") as f:
+            f.write(",".join(columns) + "\n")
+            for line in all_lines[1:]:
+                f.write(line)
 
 
 def log_research_trade(pos, bot_name="research"):
@@ -196,6 +214,12 @@ def log_s3_trade(pos, bot_name="test"):
         "pnl": round(pos.pnl, 2) if pos.pnl else 0,
         "exit_reason": pos.exit_reason or pos.status or "",
         "filter_reason": filter_reason,
+        "ask_at_buy": getattr(pos, "ask_at_buy", 0),
+        "bid_at_sell_trigger": getattr(pos, "bid_at_sell_trigger", 0),
+        "btc_at_entry": getattr(pos, "btc_at_entry", 0),
+        "btc_at_exit": getattr(pos, "btc_at_exit", 0),
+        "other_side_high": getattr(pos, "other_side_high", 0),
+        "reversal_detected": getattr(pos, "reversal_detected", False),
     }
 
     with lock:

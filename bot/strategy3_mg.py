@@ -57,9 +57,12 @@ class S3Stats:
     noleader_would_lose: int = 0
     manip_would_win: int = 0
     manip_would_lose: int = 0
+    reversals_detected: int = 0
     redeems: int = 0
     usdc_redeemed: float = 0.0
 
+
+REVERSAL_THRESHOLD = 0.60
 
 @dataclass
 class S3Position:
@@ -75,6 +78,30 @@ class S3Position:
     status: str = "open"
     exit_reason: str = ""
     filter_reason: str = ""
+    reversal_detected: bool = False
+    ask_at_buy: float = 0.0
+    btc_at_entry: float = 0.0
+    btc_at_exit: float = 0.0
+    other_side_high: float = 0.0
+    bid_at_sell_trigger: float = 0.0
+
+
+@dataclass
+class PostExitTracker:
+    """Monitors a market after the bot has exited (TP/SL) until resolution."""
+    market: Market
+    side: str
+    token_id: str
+    entry_price: float
+    exit_price: float
+    exit_reason: str
+    qty: float
+    exit_time: float
+    our_side_max: float = 0.0
+    our_side_min: float = 1.0
+    other_side_max: float = 0.0
+    recovered_above_entry: bool = False
+    seconds_left_at_exit: float = 0.0
 
 
 @dataclass
@@ -93,7 +120,7 @@ class Strategy3MG:
     def __init__(self, poly: PolymarketClient, trade_hours=None,
                  pnl_store=None, email_on_loss=False, bot_name="research",
                  guard_config: dict = None, entry_gate: float = 1.0,
-                 sl_price=None):
+                 sl_price=None, skip_no_leader: bool = False):
         self.poly = poly
         self.stats = S3Stats()
         self._positions: List[S3Position] = []
@@ -105,13 +132,17 @@ class Strategy3MG:
         self._sl_price = sl_price if sl_price is not None else SL_PRICE
         self.trade_size = USDC_PER_TRADE
         self._trackers: Dict[str, S3WindowTracker] = {}
+        self._post_exit: List[PostExitTracker] = []
         self._decided_cids: Set[str] = set()
         self._running = False
         self._last_hour_key = ""
         self._last_day = ""
         self._trade_hours = trade_hours
         self._entry_gate = entry_gate
-        self.manip_guard = ManipulationGuard(**(guard_config or {}))
+        self._skip_no_leader = skip_no_leader
+        gc = dict(guard_config or {})
+        gc.setdefault("bot_name", bot_name)
+        self.manip_guard = ManipulationGuard(**gc)
         self._last_redeem_check: float = 0
         self._data_logger = DataLogger(bot_name)
 
@@ -194,8 +225,11 @@ class Strategy3MG:
                     no_book = await self.poly.get_book_depth(mkt.no_token_id)
                     self._data_logger.log_analysis_tick(
                         mkt.question, up_bid or 0, down_bid or 0,
+                        yes_book.get("ask", 0), no_book.get("ask", 0),
                         yes_book["depth"], no_book["depth"],
+                        yes_book.get("ask_depth", 0), no_book.get("ask_depth", 0),
                         btc, remaining,
+                        market_id=cid,
                     )
 
                 if (tracker.up_high >= SKIP_THRESHOLD and
@@ -256,7 +290,16 @@ class Strategy3MG:
                     leader = "Up" if tracker.up_high >= tracker.down_high else "Down"
                     leader_token = mkt.yes_token_id if leader == "Up" else mkt.no_token_id
                     leader_price = tracker.up_high if leader == "Up" else tracker.down_high
-                    if leader_price > 0 and leader_price <= BUY_MAX_PRICE:
+                    if self._skip_no_leader:
+                        self.stats.skipped_no_leader += 1
+                        self.stats.last_action = (
+                            f"SKIP NO LEADER ({leader} best={leader_price:.2f})")
+                        log.info("S3+MG SKIP NO LEADER: %s (best=%.2f)",
+                                 mkt.question[:40], leader_price)
+                        self._create_skip_phantom(mkt, tracker, "no_leader")
+                        self._data_logger.log_skipped(
+                            mkt.question, "no_leader", tracker.up_high, tracker.down_high, btc)
+                    elif leader_price > 0 and leader_price <= BUY_MAX_PRICE:
                         skip, reason = self.manip_guard.should_skip(
                             entry_price=leader_price, entry_gate=self._entry_gate)
                         if skip:
@@ -374,12 +417,15 @@ class Strategy3MG:
 
         entry = result.avg_entry if result.avg_entry > 0 else ask
         qty = result.qty if result.qty > 0 else math.floor((self.trade_size / ask) * 100) / 100
+        btc_now = await self._data_logger.fetch_btc_price()
 
         pos = S3Position(
             market=mkt, side=buy_side, token_id=buy_token,
             entry_price=entry, qty=qty,
             spent=round(entry * qty, 2),
             entry_time=time.time(),
+            ask_at_buy=ask,
+            btc_at_entry=btc_now,
         )
         self._positions.append(pos)
         tracker.bought = True
@@ -413,6 +459,15 @@ class Strategy3MG:
                            else pos.market.yes_token_id)
             other_bid = await self.poly._get_best_bid(other_token) or 0
 
+            if not pos.reversal_detected and other_bid >= REVERSAL_THRESHOLD:
+                pos.reversal_detected = True
+                log.info("  REVERSAL DETECTED: %s bought %s @ %.2f, other side now %.2f | %s",
+                         pos.side, pos.side, pos.entry_price, other_bid,
+                         pos.market.question[:40])
+
+            if other_bid > pos.other_side_high:
+                pos.other_side_high = other_bid
+
             yes_bid = bid if pos.side == "Up" else other_bid
             no_bid = bid if pos.side == "Down" else other_bid
             yes_book = await self.poly.get_book_depth(pos.market.yes_token_id)
@@ -421,7 +476,9 @@ class Strategy3MG:
             self._data_logger.log_position_tick(
                 pos.market.question, pos.side, pos.entry_price,
                 yes_bid, no_bid,
+                yes_book.get("ask", 0), no_book.get("ask", 0),
                 yes_book["depth"], no_book["depth"],
+                yes_book.get("ask_depth", 0), no_book.get("ask_depth", 0),
                 btc, remaining,
             )
 
@@ -433,10 +490,12 @@ class Strategy3MG:
                 continue
 
             if bid >= TP_PRICE:
+                pos.bid_at_sell_trigger = bid
                 await self._sell_position(pos, bid, "tp")
                 continue
 
             if bid <= self._sl_price:
+                pos.bid_at_sell_trigger = bid
                 await self._sell_position(pos, bid, "sl")
                 continue
 
@@ -504,7 +563,58 @@ class Strategy3MG:
                 except Exception as e:
                     log.warning("Failed to log phantom to history: %s", e)
 
+        for pet in list(self._post_exit):
+            bid = await self.poly._get_best_bid(pet.token_id)
+            resolved = False
+            resolution = ""
+
+            if bid is None:
+                if pet.market.window_end and now > pet.market.window_end + 10:
+                    resolved = True
+                    resolution = "Unknown"
+                else:
+                    continue
+            else:
+                if bid > pet.our_side_max:
+                    pet.our_side_max = bid
+                if bid < pet.our_side_min:
+                    pet.our_side_min = bid
+                if not pet.recovered_above_entry and bid >= pet.entry_price:
+                    pet.recovered_above_entry = True
+
+                other_token = (pet.market.no_token_id if pet.side == "Up"
+                               else pet.market.yes_token_id)
+                other_bid = await self.poly._get_best_bid(other_token) or 0
+                if other_bid > pet.other_side_max:
+                    pet.other_side_max = other_bid
+
+                if pet.market.window_end and now > pet.market.window_end - 5:
+                    resolved = True
+                    resolution = "Up" if bid > 0.5 else "Down"
+
+            if resolved:
+                res_price = 1.0 if resolution == pet.side else 0.0
+                held_pnl = (res_price - pet.entry_price) * pet.qty
+                self._data_logger.log_post_exit(
+                    pet.market.question, pet.side, pet.exit_reason,
+                    pet.entry_price, pet.exit_price, pet.exit_price,
+                    resolution, held_pnl,
+                    pet.our_side_max, pet.our_side_min,
+                    pet.other_side_max,
+                    pet.recovered_above_entry,
+                    pet.seconds_left_at_exit,
+                )
+                held_tag = "SAME" if (held_pnl >= 0) == (pet.exit_reason == "tp") else "DIFF"
+                log.info(
+                    "  POST-EXIT RESOLVED: %s %s | exit=%s@$%.2f | resolved=%s | held=$%+.2f (%s) | max=$%.2f min=$%.2f",
+                    pet.side, pet.market.question[:30], pet.exit_reason,
+                    pet.exit_price, resolution, held_pnl, held_tag,
+                    pet.our_side_max, pet.our_side_min,
+                )
+                self._post_exit.remove(pet)
+
     async def _sell_position(self, pos: S3Position, bid: float, reason: str):
+        pos.btc_at_exit = await self._data_logger.fetch_btc_price()
         if cfg.dry_run:
             pos.exit_price = bid
             pos.pnl = (bid - pos.entry_price) * pos.qty
@@ -540,42 +650,73 @@ class Strategy3MG:
             self.stats.tp_hits += 1
         elif reason == "sl":
             self.stats.sl_hits += 1
+        if pos.reversal_detected:
+            self.stats.reversals_detected += 1
         self.stats.total_pnl += pos.pnl
         self._record_hourly_pnl(pos.pnl)
-        self.stats.last_action = f"{reason.upper()} {pos.side} @ ${pos.exit_price:.3f} PnL ${pos.pnl:+.2f}"
+        rev_tag = " [REVERSAL]" if pos.reversal_detected else ""
+        self.stats.last_action = f"{reason.upper()} {pos.side} @ ${pos.exit_price:.3f} PnL ${pos.pnl:+.2f}{rev_tag}"
         self._closed.append(pos)
         log.info(
-            "[S3+MG] %s %s @ $%.3f -> $%.3f | PnL $%+.2f | %s",
+            "[S3+MG] %s %s @ $%.3f -> $%.3f | PnL $%+.2f%s | %s",
             reason.upper(), pos.side, pos.entry_price, pos.exit_price,
-            pos.pnl, pos.market.question[:40],
+            pos.pnl, rev_tag, pos.market.question[:40],
         )
         self._persist_trade(pos.pnl, is_win)
-        self.manip_guard.record_market(pos.side, is_win, pos.pnl)
+        self.manip_guard.record_market(pos.side, is_win, pos.pnl,
+                                       was_reversal=pos.reversal_detected)
         try:
             log_s3_trade(pos, bot_name=self._bot_name)
         except Exception as e:
             log.warning("Failed to log trade to history: %s", e)
+
+        remaining = (pos.market.window_end - time.time()) if pos.market.window_end else 0
+        if remaining > 5:
+            pet = PostExitTracker(
+                market=pos.market, side=pos.side, token_id=pos.token_id,
+                entry_price=pos.entry_price, exit_price=pos.exit_price or bid,
+                exit_reason=reason, qty=pos.qty, exit_time=time.time(),
+                our_side_max=pos.exit_price or bid,
+                our_side_min=pos.exit_price or bid,
+                other_side_max=pos.other_side_high,
+                seconds_left_at_exit=remaining,
+            )
+            self._post_exit.append(pet)
+            log.info("  POST-EXIT TRACKING: %s %s | %.0fs remaining | %s",
+                     reason.upper(), pos.side, remaining, pos.market.question[:35])
 
     def _close_position(self, pos: S3Position, exit_price: float, reason: str):
         pos.exit_price = exit_price
         pos.pnl = (exit_price - pos.entry_price) * pos.qty
         pos.status = reason
         pos.exit_reason = reason
+        if pos.btc_at_exit == 0:
+            pos.btc_at_exit = self._data_logger._btc_price
+        resolution = "Up" if exit_price > 0.5 else "Down"
+        btc_swing = self._data_logger.finalize_market(pos.market.condition_id)
+        self._data_logger.log_resolution(
+            pos.market.question, resolution,
+            pos.btc_at_entry, pos.btc_at_exit, btc_swing,
+        )
         is_win = pos.pnl >= 0
         if is_win:
             self.stats.wins += 1
         else:
             self.stats.losses += 1
+        if pos.reversal_detected:
+            self.stats.reversals_detected += 1
         self.stats.total_pnl += pos.pnl
         self._record_hourly_pnl(pos.pnl)
-        self.stats.last_action = f"RESOLVED {pos.side} ${pos.pnl:+.2f}"
+        rev_tag = " [REVERSAL]" if pos.reversal_detected else ""
+        self.stats.last_action = f"RESOLVED {pos.side} ${pos.pnl:+.2f}{rev_tag}"
         self._closed.append(pos)
         log.info(
-            "[S3+MG] RESOLVED %s: $%.2f -> PnL $%+.2f | %s",
-            pos.side, exit_price, pos.pnl, pos.market.question[:45],
+            "[S3+MG] RESOLVED %s: $%.2f -> PnL $%+.2f%s | %s",
+            pos.side, exit_price, pos.pnl, rev_tag, pos.market.question[:45],
         )
         self._persist_trade(pos.pnl, is_win)
-        self.manip_guard.record_market(pos.side, is_win, pos.pnl)
+        self.manip_guard.record_market(pos.side, is_win, pos.pnl,
+                                       was_reversal=pos.reversal_detected)
         try:
             log_s3_trade(pos, bot_name=self._bot_name)
         except Exception as e:
@@ -624,6 +765,7 @@ class Strategy3MG:
                         "noleader_would_lose": self.stats.noleader_would_lose,
                         "manip_would_win": self.stats.manip_would_win,
                         "manip_would_lose": self.stats.manip_would_lose,
+                        "reversals_detected": self.stats.reversals_detected,
                         "manip_total_pauses": mg["total_pauses"],
                         "hourly_pnl": str(self.stats.hourly_pnl),
                     })
@@ -637,10 +779,11 @@ class Strategy3MG:
             mg = self.manip_guard.status_dict
             log.info(
                 "=== S3+MG HOURLY [%s] ===  PnL: $%+.2f | Total: $%+.2f | W:%d L:%d | "
-                "ManipSkips:%d (W:%d L:%d) | Guard: %s",
+                "ManipSkips:%d (W:%d L:%d) | Reversals:%d | RevRate:%.0f%% | Guard: %s",
                 self._last_hour_key, prev_pnl, self.stats.total_pnl,
                 self.stats.wins, self.stats.losses,
                 self.stats.skipped_manip, self.stats.manip_would_win, self.stats.manip_would_lose,
+                self.stats.reversals_detected, mg["reversal_rate"] * 100,
                 "PAUSED" if mg["paused"] else "ACTIVE",
             )
 

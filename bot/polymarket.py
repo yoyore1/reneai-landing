@@ -458,7 +458,8 @@ class PolymarketClient:
                         total_matched += qty
                         log.info("[LIVE] SELL %s FILLED %d shares", label, qty)
                     elif order_id:
-                        await asyncio.sleep(2)
+                        if reason != "sl":
+                            await asyncio.sleep(2)
                         try:
                             info = self._clob_client.get_order(order_id)
                             matched = float(info.get("size_matched", "0"))
@@ -475,7 +476,8 @@ class PolymarketClient:
                     log.warning("[LIVE] SELL %s failed: %s", label, exc)
 
                 if batch_idx < 2 and (second_qty > 0 or third_qty > 0):
-                    await asyncio.sleep(1)
+                    if reason != "sl":
+                        await asyncio.sleep(1)
 
             if total_matched >= first_qty * 0.8:
                 fill_price = bid_price
@@ -511,9 +513,8 @@ class PolymarketClient:
 
     async def get_book_depth(self, token_id: str, depth_range: float = 0.05) -> dict:
         """
-        Fetch order book and return summary: best bid, total bid liquidity
-        within `depth_range` of best bid (default 5c).
-        Returns {"bid": float, "depth": float} or {"bid": 0, "depth": 0}.
+        Fetch order book and return summary: best bid/ask, bid/ask depth
+        within `depth_range` of best price (default 5c).
         """
         try:
             url = f"{cfg.poly_clob_host}/book"
@@ -521,17 +522,25 @@ class PolymarketClient:
             async with self._session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=5)) as resp:
                 book = await resp.json()
             bids = book.get("bids", [])
-            if not bids:
-                return {"bid": 0, "depth": 0}
-            best_price = max(float(b["price"]) for b in bids)
-            total_depth = sum(
+            asks = book.get("asks", [])
+            best_bid = max(float(b["price"]) for b in bids) if bids else 0
+            bid_depth = sum(
                 float(b.get("size", 0))
                 for b in bids
-                if float(b["price"]) >= best_price - depth_range
-            )
-            return {"bid": best_price, "depth": round(total_depth, 1)}
+                if float(b["price"]) >= best_bid - depth_range
+            ) if bids else 0
+            best_ask = min(float(a["price"]) for a in asks) if asks else 0
+            ask_depth = sum(
+                float(a.get("size", 0))
+                for a in asks
+                if float(a["price"]) <= best_ask + depth_range
+            ) if asks else 0
+            return {
+                "bid": best_bid, "depth": round(bid_depth, 1),
+                "ask": best_ask, "ask_depth": round(ask_depth, 1),
+            }
         except Exception:
-            return {"bid": 0, "depth": 0}
+            return {"bid": 0, "depth": 0, "ask": 0, "ask_depth": 0}
 
     # ------------------------------------------------------------------
     # Helpers

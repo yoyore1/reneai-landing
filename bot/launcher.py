@@ -146,7 +146,7 @@ LAUNCHER_HTML = """<!DOCTYPE html>
   <div class="card" style="border-color:#10b98120">
     <div class="logo">&#128737;</div>
     <h2>S3 + Tuned Guard V2</h2>
-    <div class="subtitle">Balanced guard &middot; streak&#8805;7 alt&#8805;5 choppy&#8805;40% gate&#8805;78c &middot; Port 9004</div>
+    <div class="subtitle">Balanced guard + reversal detection &middot; rev&#8805;30% &middot; Port 9004</div>
     <div class="tag" style="background:rgba(16,185,129,0.12);color:#10b981;border:1px solid rgba(16,185,129,0.2)">TUNED V2</div>
     <div id="status-mg2" class="status-box stopped">
       <span class="dot off" id="dot-mg2"></span>
@@ -384,7 +384,7 @@ class LauncherServer:
             ),
             "mg2": BotProcess(
                 "mg2",
-                ["--port", "9004", "--strategy", "mg2", "--pnl-file", "pnl_mg2.json",
+                ["--port", "9004", "--strategy", "mg2r", "--pnl-file", "pnl_mg2.json",
                  "--bot-name", "mg2"],
                 port=9004,
             ),
