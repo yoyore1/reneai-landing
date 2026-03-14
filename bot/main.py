@@ -94,13 +94,21 @@ async def main(port: int, live: bool, trade_start: str, trade_end: str, pnl_file
         if sl_price is not None:
             kwargs["sl_price"] = sl_price
         if strategy in ("mg2", "mg2r"):
-            kwargs["guard_config"] = {
+            gc = {
                 "win_streak_threshold": 7,
                 "alternation_threshold": 5,
                 "choppy_rate_threshold": 0.40,
                 "cooldown_markets": 1,
             }
+            if strategy == "mg2":
+                gc["sister_bot"] = "mg2"
+            kwargs["guard_config"] = gc
             kwargs["entry_gate"] = 0.78
+            if strategy == "mg2r":
+                kwargs["reversal_exit_threshold"] = 0.35
+            kwargs["flip_on_guard"] = True
+            kwargs["flip_size"] = 40.0
+            kwargs["flip_sl"] = 0.10
     strat3 = StratClass(poly, **kwargs)
 
     shutdown_event = asyncio.Event()

@@ -59,6 +59,15 @@ POST_EXIT_HEADER = (
     "recovered_above_entry,seconds_left_at_exit\n"
 )
 
+FULL_TICK_HEADER = (
+    "timestamp,edt_time,edt_hour,market,phase,"
+    "side,entry_price,"
+    "yes_bid,no_bid,yes_ask,no_ask,"
+    "yes_depth,no_depth,yes_ask_depth,no_ask_depth,"
+    "yes_spread,no_spread,"
+    "btc_price,seconds_left\n"
+)
+
 
 class DataLogger:
 
@@ -80,12 +89,18 @@ class DataLogger:
         self._post_exit_file = os.path.join(self._dir, f"{bot_name}_post_exit.csv")
         self._init_csv(self._post_exit_file, POST_EXIT_HEADER)
 
+        self._full_tick_file = os.path.join(self._dir, f"{bot_name}_full_ticks.csv")
+        self._upgrade_csv(self._full_tick_file, FULL_TICK_HEADER)
+
         self._btc_price: float = 0.0
         self._btc_last_fetch: float = 0
         self._http_session: aiohttp.ClientSession = None
 
         self._last_analysis_log: dict = {}
         self._analysis_interval = 3.0
+
+        self._last_full_tick_log: dict = {}
+        self._full_tick_interval = 3.0
 
         self._btc_per_market: dict[str, list[float]] = defaultdict(list)
 
@@ -169,6 +184,40 @@ class DataLogger:
             self._last_analysis_log[market_id] = now
             return True
         return False
+
+    def should_log_full_tick(self, market_id: str) -> bool:
+        now = time.time()
+        last = self._last_full_tick_log.get(market_id, 0)
+        if now - last >= self._full_tick_interval:
+            self._last_full_tick_log[market_id] = now
+            return True
+        return False
+
+    def log_full_tick(self, market_name: str, phase: str,
+                      side: str, entry_price: float,
+                      yes_bid: float, no_bid: float,
+                      yes_ask: float, no_ask: float,
+                      yes_depth: float, no_depth: float,
+                      yes_ask_depth: float, no_ask_depth: float,
+                      btc_price: float, seconds_left: float,
+                      market_id: str = ""):
+        self.track_btc_for_market(market_id or market_name, btc_price)
+        yes_spread = round(yes_ask - yes_bid, 3) if yes_ask > 0 and yes_bid > 0 else 0
+        no_spread = round(no_ask - no_bid, 3) if no_ask > 0 and no_bid > 0 else 0
+        try:
+            with open(self._full_tick_file, "a") as f:
+                f.write(
+                    f"{self._ts()},{self._edt_str()},{self._edt_hour()},"
+                    f"{self._clean(market_name)},{phase},"
+                    f"{side},{entry_price:.3f},"
+                    f"{yes_bid:.3f},{no_bid:.3f},{yes_ask:.3f},{no_ask:.3f},"
+                    f"{yes_depth:.1f},{no_depth:.1f},"
+                    f"{yes_ask_depth:.1f},{no_ask_depth:.1f},"
+                    f"{yes_spread:.3f},{no_spread:.3f},"
+                    f"{btc_price:.2f},{seconds_left:.0f}\n"
+                )
+        except Exception:
+            pass
 
     def log_analysis_tick(self, market_name: str,
                           yes_bid: float, no_bid: float,

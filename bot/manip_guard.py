@@ -41,7 +41,7 @@ class ManipulationGuard:
                  choppy_rate_threshold=0.30, cooldown_markets=2,
                  side_window=6, choppy_window=10,
                  reversal_rate_threshold=0.30, reversal_window=5,
-                 bot_name: str = ""):
+                 bot_name: str = "", sister_bot: str = ""):
         self.SIDE_WINDOW = side_window
         self.ALTERNATION_THRESHOLD = alternation_threshold
         self.WIN_STREAK_THRESHOLD = win_streak_threshold
@@ -52,6 +52,7 @@ class ManipulationGuard:
         self.REVERSAL_RATE_THRESHOLD = reversal_rate_threshold
 
         self._bot_name = bot_name
+        self._sister_bot = sister_bot
         self._persist_path = PERSIST_DIR / f"guard_{bot_name}.json" if bot_name else None
 
         self._history: deque[MarketRecord] = deque(maxlen=20)
@@ -154,23 +155,64 @@ class ManipulationGuard:
             log.warning("Guard persist save failed: %s", exc)
 
     def _load(self):
-        if not self._persist_path or not self._persist_path.exists():
+        if self._persist_path and self._persist_path.exists():
+            try:
+                data = json.loads(self._persist_path.read_text())
+                for rec in data.get("history", []):
+                    self._history.append(MarketRecord(**rec))
+                self._consec_wins = data.get("consec_wins", 0)
+                self._cooldown_remaining = data.get("cooldown_remaining", 0)
+                self._paused = data.get("paused", False)
+                self._pause_reason = data.get("pause_reason", "")
+                self._total_pauses = data.get("total_pauses", 0)
+                self._phantom_wins = data.get("phantom_wins", 0)
+                self._phantom_losses = data.get("phantom_losses", 0)
+                log.info("MANIP GUARD: Restored %d records from disk for '%s'",
+                         len(self._history), self._bot_name)
+            except Exception as exc:
+                log.warning("Guard persist load failed: %s", exc)
+        self._warm_from_sister()
+
+    def _warm_from_sister(self):
+        """Import recent market records from a sister bot's guard on startup."""
+        if not self._sister_bot or not self._persist_path:
+            return
+        sister_path = PERSIST_DIR / f"guard_{self._sister_bot}.json"
+        if not sister_path.exists():
             return
         try:
-            data = json.loads(self._persist_path.read_text())
-            for rec in data.get("history", []):
-                self._history.append(MarketRecord(**rec))
-            self._consec_wins = data.get("consec_wins", 0)
-            self._cooldown_remaining = data.get("cooldown_remaining", 0)
-            self._paused = data.get("paused", False)
-            self._pause_reason = data.get("pause_reason", "")
-            self._total_pauses = data.get("total_pauses", 0)
-            self._phantom_wins = data.get("phantom_wins", 0)
-            self._phantom_losses = data.get("phantom_losses", 0)
-            log.info("MANIP GUARD: Restored %d records from disk for '%s'",
-                     len(self._history), self._bot_name)
+            sister_data = json.loads(sister_path.read_text())
+            sister_history = sister_data.get("history", [])
+            if not sister_history:
+                return
+
+            our_latest = max((r.timestamp for r in self._history), default=0)
+
+            imported = 0
+            for rec_dict in sister_history:
+                ts = rec_dict.get("timestamp", 0)
+                if ts > our_latest:
+                    self._history.append(MarketRecord(**rec_dict))
+                    imported += 1
+
+            if imported > 0:
+                sided = [r for r in self._history
+                         if not r.was_choppy and not r.was_noleader]
+                self._consec_wins = 0
+                for r in reversed(sided):
+                    if r.won:
+                        self._consec_wins += 1
+                    else:
+                        break
+                self._save()
+                log.info(
+                    "MANIP GUARD: Warmed %d records from sister '%s' | "
+                    "history=%d consec_wins=%d",
+                    imported, self._sister_bot,
+                    len(self._history), self._consec_wins,
+                )
         except Exception as exc:
-            log.warning("Guard persist load failed: %s", exc)
+            log.warning("Guard sister warmup failed: %s", exc)
 
     def record_market(self, side: str, won: bool, pnl: float,
                       was_choppy: bool = False, was_noleader: bool = False,

@@ -22,6 +22,7 @@ from bot.polymarket import PolymarketClient, Market
 from bot.trade_history import log_s3_trade, log_daily_snapshot
 from bot.manip_guard import ManipulationGuard
 from bot.data_logger import DataLogger
+from bot.wallet_tracker import WalletTracker
 
 log = logging.getLogger("strategy3_mg")
 
@@ -63,6 +64,8 @@ class S3Stats:
 
 
 REVERSAL_THRESHOLD = 0.60
+RESOLUTION_WAIT = 30       # seconds after market end before checking resolution
+RESOLUTION_BID_WIN = 0.90  # bid above this after resolution = our side won
 
 @dataclass
 class S3Position:
@@ -120,7 +123,8 @@ class Strategy3MG:
     def __init__(self, poly: PolymarketClient, trade_hours=None,
                  pnl_store=None, email_on_loss=False, bot_name="research",
                  guard_config: dict = None, entry_gate: float = 1.0,
-                 sl_price=None, skip_no_leader: bool = False):
+                 sl_price=None, skip_no_leader: bool = False,
+                 reversal_exit_threshold: float = None):
         self.poly = poly
         self.stats = S3Stats()
         self._positions: List[S3Position] = []
@@ -130,6 +134,7 @@ class Strategy3MG:
         self._email_on_loss = email_on_loss
         self._bot_name = bot_name
         self._sl_price = sl_price if sl_price is not None else SL_PRICE
+        self._reversal_exit = reversal_exit_threshold
         self.trade_size = USDC_PER_TRADE
         self._trackers: Dict[str, S3WindowTracker] = {}
         self._post_exit: List[PostExitTracker] = []
@@ -145,6 +150,10 @@ class Strategy3MG:
         self.manip_guard = ManipulationGuard(**gc)
         self._last_redeem_check: float = 0
         self._data_logger = DataLogger(bot_name)
+        self._wallet_tracker = WalletTracker(bot_name)
+        if self._reversal_exit:
+            log.info("S3+MG: Mid-trade reversal exit ENABLED at opposing bid >= %.2f",
+                     self._reversal_exit)
 
     def _is_trading_time(self) -> bool:
         if not self._trade_hours:
@@ -190,20 +199,61 @@ class Strategy3MG:
         trading_ok = self._is_trading_time()
 
         for cid, tracker in list(self._trackers.items()):
-            if tracker.finalized:
-                continue
-
             mkt = tracker.market
             if not mkt.window_end:
                 continue
 
             remaining = mkt.window_end - now
 
-            if remaining <= 0:
-                if not tracker.bought and not tracker.finalized:
+            if remaining <= -RESOLUTION_WAIT:
+                if not tracker.finalized:
                     tracker.finalized = True
                     self._decided_cids.add(cid)
                 self._trackers.pop(cid, None)
+                continue
+
+            if self._data_logger.should_log_full_tick(cid):
+                try:
+                    up_bid = await self.poly._get_best_bid(mkt.yes_token_id)
+                    down_bid = await self.poly._get_best_bid(mkt.no_token_id)
+                    btc = await self._data_logger.fetch_btc_price()
+                    yes_book = await self.poly.get_book_depth(mkt.yes_token_id)
+                    no_book = await self.poly.get_book_depth(mkt.no_token_id)
+
+                    if remaining <= 0:
+                        phase = "resolved"
+                    elif tracker.bought:
+                        phase = "holding"
+                    elif remaining <= ANALYSIS_START:
+                        phase = "analyzing"
+                    else:
+                        phase = "watching"
+
+                    pos_side, pos_entry = "", 0.0
+                    for pos in self._positions:
+                        if pos.market.condition_id == cid:
+                            pos_side = pos.side
+                            pos_entry = pos.entry_price
+                            break
+
+                    self._data_logger.log_full_tick(
+                        mkt.question, phase, pos_side, pos_entry,
+                        up_bid or 0, down_bid or 0,
+                        yes_book.get("ask", 0), no_book.get("ask", 0),
+                        yes_book["depth"], no_book["depth"],
+                        yes_book.get("ask_depth", 0), no_book.get("ask_depth", 0),
+                        btc, remaining, market_id=cid,
+                    )
+                except Exception as exc:
+                    log.debug("Full tick log error: %s", exc)
+
+            if tracker.finalized:
+                continue
+
+            if remaining <= 0:
+                if not tracker.bought:
+                    tracker.finalized = True
+                    self._decided_cids.add(cid)
                 continue
 
             if remaining <= ANALYSIS_START and remaining > BUY_WINDOW_END:
@@ -449,8 +499,8 @@ class Strategy3MG:
 
             bid = await self.poly._get_best_bid(pos.token_id)
             if bid is None:
-                if pos.market.window_end and now > pos.market.window_end + 10:
-                    self._close_position(pos, 0.0, "resolved-unknown")
+                if pos.market.window_end and now > pos.market.window_end + RESOLUTION_WAIT:
+                    self._close_position(pos, 0.0, "resolved-loss")
                 continue
 
             remaining = (pos.market.window_end - now) if pos.market.window_end else 0
@@ -482,16 +532,28 @@ class Strategy3MG:
                 btc, remaining,
             )
 
-            if pos.market.window_end and now > pos.market.window_end - 5:
-                if bid > 0.5:
+            if pos.market.window_end and now > pos.market.window_end + RESOLUTION_WAIT:
+                if bid > RESOLUTION_BID_WIN:
                     self._close_position(pos, 1.0, "resolved-win")
                 else:
                     self._close_position(pos, 0.0, "resolved-loss")
                 continue
 
+            if pos.market.window_end and now > pos.market.window_end:
+                continue
+
             if bid >= TP_PRICE:
                 pos.bid_at_sell_trigger = bid
                 await self._sell_position(pos, bid, "tp")
+                continue
+
+            if self._reversal_exit and other_bid >= self._reversal_exit and remaining > 30:
+                pos.bid_at_sell_trigger = bid
+                pos.reversal_detected = True
+                log.info("  MID-TRADE REVERSAL EXIT: %s @ %.2f, opp=%.2f, our=%.2f | %s",
+                         pos.side, pos.entry_price, other_bid, bid,
+                         pos.market.question[:40])
+                await self._sell_position(pos, bid, "reversal-exit")
                 continue
 
             if bid <= self._sl_price:
@@ -508,14 +570,14 @@ class Strategy3MG:
             won = False
 
             if bid is None:
-                if ph.market.window_end and now > ph.market.window_end + 10:
+                if ph.market.window_end and now > ph.market.window_end + RESOLUTION_WAIT:
                     ph.exit_price = 0.0
                     ph.pnl = -ph.entry_price * ph.qty
                     resolved, won = True, False
                 else:
                     continue
-            elif ph.market.window_end and now > ph.market.window_end - 5:
-                ph.exit_price = 1.0 if bid > 0.5 else 0.0
+            elif ph.market.window_end and now > ph.market.window_end + RESOLUTION_WAIT:
+                ph.exit_price = 1.0 if bid > RESOLUTION_BID_WIN else 0.0
                 ph.pnl = (ph.exit_price - ph.entry_price) * ph.qty
                 resolved, won = True, ph.pnl >= 0
             elif bid >= TP_PRICE:
@@ -563,15 +625,24 @@ class Strategy3MG:
                 except Exception as e:
                     log.warning("Failed to log phantom to history: %s", e)
 
+                ph_resolution = ph.side if won else ("Down" if ph.side == "Up" else "Up")
+                asyncio.ensure_future(self._wallet_tracker.fetch_and_log_trades(
+                    condition_id=ph.market.condition_id,
+                    market_name=ph.market.question,
+                    window_end=ph.market.window_end or 0,
+                    resolution=ph_resolution,
+                    bot_side=ph.side,
+                ))
+
         for pet in list(self._post_exit):
             bid = await self.poly._get_best_bid(pet.token_id)
             resolved = False
             resolution = ""
 
             if bid is None:
-                if pet.market.window_end and now > pet.market.window_end + 10:
+                if pet.market.window_end and now > pet.market.window_end + RESOLUTION_WAIT:
                     resolved = True
-                    resolution = "Unknown"
+                    resolution = "Down" if pet.side == "Up" else "Up"
                 else:
                     continue
             else:
@@ -588,9 +659,9 @@ class Strategy3MG:
                 if other_bid > pet.other_side_max:
                     pet.other_side_max = other_bid
 
-                if pet.market.window_end and now > pet.market.window_end - 5:
+                if pet.market.window_end and now > pet.market.window_end + RESOLUTION_WAIT:
                     resolved = True
-                    resolution = "Up" if bid > 0.5 else "Down"
+                    resolution = pet.side if bid > RESOLUTION_BID_WIN else ("Down" if pet.side == "Up" else "Up")
 
             if resolved:
                 res_price = 1.0 if resolution == pet.side else 0.0
@@ -630,10 +701,6 @@ class Strategy3MG:
             )
             success = await self.poly.sell(temp, reason=reason)
             if not success:
-                if pos.market.window_end and time.time() > pos.market.window_end - 10:
-                    log.warning("S3+MG sell failed near market end — closing as resolution")
-                    self._close_position(pos, bid, f"resolved-{reason}")
-                    return
                 log.warning("S3+MG sell failed for %s %s, will retry", reason.upper(), pos.side)
                 return
             pos.exit_price = temp.exit_price or bid
@@ -692,7 +759,7 @@ class Strategy3MG:
         pos.exit_reason = reason
         if pos.btc_at_exit == 0:
             pos.btc_at_exit = self._data_logger._btc_price
-        resolution = "Up" if exit_price > 0.5 else "Down"
+        resolution = pos.side if exit_price > 0.5 else ("Down" if pos.side == "Up" else "Up")
         btc_swing = self._data_logger.finalize_market(pos.market.condition_id)
         self._data_logger.log_resolution(
             pos.market.question, resolution,
@@ -721,6 +788,14 @@ class Strategy3MG:
             log_s3_trade(pos, bot_name=self._bot_name)
         except Exception as e:
             log.warning("Failed to log trade to history: %s", e)
+
+        asyncio.ensure_future(self._wallet_tracker.fetch_and_log_trades(
+            condition_id=pos.market.condition_id,
+            market_name=pos.market.question,
+            window_end=pos.market.window_end or 0,
+            resolution=resolution,
+            bot_side=pos.side,
+        ))
 
     async def _discover(self):
         markets = await self.poly.find_active_btc_5min_markets()
