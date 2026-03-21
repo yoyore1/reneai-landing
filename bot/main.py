@@ -22,13 +22,22 @@ def _get_strategy_class(name: str):
     if name == "vol":
         from bot.strategy3_vol import Strategy3Vol
         return Strategy3Vol
-    if name == "scalp":
+    if name in ("scalp", "scalp_predict"):
         from bot.strategy_scalp import StrategyScalp
         return StrategyScalp
     if name == "v2":
         from bot.strategy3_v2 import Strategy3V2
         return Strategy3V2
-    if name == "mg":
+    if name == "perfected":
+        from bot.strategy_perfected import StrategyPerfected
+        return StrategyPerfected
+    if name == "elite":
+        from bot.strategy_elite import StrategyElite
+        return StrategyElite
+    if name == "edge":
+        from bot.strategy_edge import StrategyEdge
+        return StrategyEdge
+    if name in ("mg", "guard"):
         from bot.strategy3_mg import Strategy3MG
         return Strategy3MG
     if name in ("mg2", "mg2r"):
@@ -87,15 +96,54 @@ async def main(port: int, live: bool, trade_start: str, trade_end: str, pnl_file
         kwargs["skip_no_leader"] = skip_no_leader
         if sl_price is not None:
             kwargs["sl_price"] = sl_price
+
+    from bot.strategy_scalp import StrategyScalp
+    if StratClass is StrategyScalp:
+        kwargs["bot_name"] = bot_name
+        if strategy == "scalp_predict":
+            kwargs["flip_size"] = 20.0
+
+    from bot.strategy_elite import StrategyElite
+    from bot.strategy_perfected import StrategyPerfected
+    from bot.strategy_edge import StrategyEdge
+    if StratClass is StrategyPerfected:
+        kwargs["bot_name"] = bot_name
+
+    if StratClass is StrategyElite:
+        kwargs["bot_name"] = bot_name
+
+    if StratClass is StrategyEdge:
+        kwargs["bot_name"] = bot_name
+
     from bot.strategy3_mg import Strategy3MG
     if StratClass is Strategy3MG:
         kwargs["bot_name"] = bot_name
         kwargs["skip_no_leader"] = skip_no_leader
         if sl_price is not None:
             kwargs["sl_price"] = sl_price
+        if strategy == "guard":
+            kwargs["guard_config"] = {
+                "win_streak_threshold": 999,
+                "alternation_threshold": 5,
+                "choppy_rate_threshold": 0.40,
+                "cooldown_markets": 1,
+            }
+        if strategy == "mg":
+            kwargs["guard_config"] = {
+                "win_streak_threshold": 999,
+                "alternation_threshold": 5,
+                "choppy_rate_threshold": 0.40,
+                "cooldown_markets": 1,
+            }
+            kwargs["flip_on_guard"] = True
+            kwargs["flip_size"] = 40.0
+            kwargs["flip_sl"] = 0.10
+            from bot.market_health import MarketHealthMonitor
+            kwargs["health_monitor"] = MarketHealthMonitor(
+                bot_name=bot_name, skip_threshold=-2)
         if strategy in ("mg2", "mg2r"):
             gc = {
-                "win_streak_threshold": 7,
+                "win_streak_threshold": 999,
                 "alternation_threshold": 5,
                 "choppy_rate_threshold": 0.40,
                 "cooldown_markets": 1,

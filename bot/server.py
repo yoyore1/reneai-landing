@@ -76,6 +76,21 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .size-bar .current{font-size:13px;color:#22c55e;font-weight:700}
   .size-bar .saved{font-size:11px;color:#22c55e;opacity:0;transition:opacity 0.3s}
   .size-bar .saved.show{opacity:1}
+  /* Live Analysis */
+  .live-panel{background:#111118;border:1px solid #1e1e2e;border-radius:10px;padding:16px;margin-bottom:16px}
+  .live-panel .lp-hd{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#555;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+  .live-panel .lp-hd .ldot{width:6px;height:6px;border-radius:50%;background:#22c55e;animation:pulse 2s ease infinite}
+  .live-panel .lp-market{font-size:14px;color:#fff;font-weight:600;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center}
+  .live-panel .lp-market .lp-time{font-size:12px;color:#555;font-weight:400}
+  .live-panel .lp-row{display:flex;gap:12px;align-items:center;margin-bottom:8px;font-size:12px}
+  .conf-bar-bg{height:22px;background:#0d0d14;border-radius:11px;flex:1;overflow:hidden;border:1px solid #1a1a2e}
+  .conf-bar{height:100%;border-radius:11px;transition:width 0.6s ease,background 0.6s ease}
+  .conf-val{font-size:22px;font-weight:800;min-width:55px;text-align:right}
+  .lp-badge{display:inline-block;padding:3px 8px;border-radius:6px;font-size:10px;font-weight:700;letter-spacing:0.5px}
+  .lp-pred{background:#0d0d14;border:1px solid #1a1a2e;border-radius:8px;padding:10px 14px;margin-top:8px;font-size:12px;display:flex;gap:16px;flex-wrap:wrap}
+  .lp-pred .pp{color:#555}
+  .lp-pred .pv{color:#fff;font-weight:600}
+  .live-idle{text-align:center;color:#333;font-size:12px;padding:8px}
   /* Calendar */
   .cal-months{display:flex;flex-wrap:wrap;gap:6px;padding:14px}
   .cal-month{padding:8px 14px;border-radius:8px;background:#0d0d14;border:1px solid #161622;
@@ -118,6 +133,18 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <span class="current" id="curSize">$20</span>
     <span class="saved" id="savedMsg">Saved!</span>
   </div>
+  <div class="size-bar" id="flipSizeBar" style="display:none">
+    <label>Flip Size</label>
+    <span>$</span>
+    <input type="number" id="flipSizeInput" min="1" max="500" step="1" value="20">
+    <button onclick="setFlipSize()">Update</button>
+    <span class="current" id="curFlipSize">$20</span>
+    <span class="saved" id="flipSavedMsg">Saved!</span>
+  </div>
+  <div class="live-panel" id="livePanel" style="display:none">
+    <div class="lp-hd"><span class="ldot"></span> LIVE ANALYSIS</div>
+    <div id="liveAnalysis"><div class="live-idle">No active analysis</div></div>
+  </div>
   <div class="last" id="lastAction"><strong>Last:</strong> waiting...</div>
   <div class="grid" id="stats"></div>
   <div class="panel"><div class="panel-hd">Open Positions</div><div id="openPos"><div class="empty">No open positions</div></div></div>
@@ -131,9 +158,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 let calData={}, selectedMonth=null, selectedDay=null;
 const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
+fetch('/api/state').then(r=>r.json()).then(render).catch(()=>{});
 const ws=new WebSocket(`ws://${location.host}/ws`);
 ws.onmessage=(e)=>{const d=JSON.parse(e.data);render(d)};
 ws.onclose=()=>setTimeout(()=>location.reload(),3000);
+ws.onerror=()=>setTimeout(()=>location.reload(),3000);
 
 // Load calendar data on start and every 60s
 function loadCal(){
@@ -150,6 +179,14 @@ function setSize(){
     if(d.ok){const msg=document.getElementById('savedMsg');msg.classList.add('show');setTimeout(()=>msg.classList.remove('show'),2000)}
   });
 }
+function setFlipSize(){
+  const val=parseFloat(document.getElementById('flipSizeInput').value);
+  if(!val||val<1)return;
+  fetch('/api/set-flip-size',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({size:val})}).then(r=>r.json()).then(d=>{
+    if(d.ok){const msg=document.getElementById('flipSavedMsg');msg.classList.add('show');setTimeout(()=>msg.classList.remove('show'),2000)}
+  });
+}
 
 function render(d){
   const m=document.getElementById('mode');
@@ -160,10 +197,17 @@ function render(d){
     document.getElementById('balance').textContent='USDC $'+parseFloat(d.balance).toFixed(2);
   }
   if(d.trade_size){document.getElementById('curSize').textContent='$'+d.trade_size.toFixed(0)}
+  if(d.flip_size){
+    document.getElementById('flipSizeBar').style.display='flex';
+    document.getElementById('curFlipSize').textContent='$'+d.flip_size.toFixed(0);
+  }
   const s=d.stats;
   const pc=s.pnl>=0?'green':'red';
+  const todayPnl=typeof s.today_pnl==='number'?s.today_pnl:0;
+  const todayPc=todayPnl>=0?'green':'red';
   document.getElementById('stats').innerHTML=`
-    <div class="stat"><div class="label">Total P&L</div><div class="val ${pc}">$${s.pnl.toFixed(2)}</div></div>
+    <div class="stat"><div class="label">Today P&L</div><div class="val ${todayPc}">$${todayPnl.toFixed(2)}</div></div>
+    <div class="stat"><div class="label">Session P&L (since start)</div><div class="val ${pc}">$${s.pnl.toFixed(2)}</div></div>
     <div class="stat"><div class="label">Win Rate</div><div class="val blue">${s.win_rate}%</div></div>
     <div class="stat"><div class="label">W / L</div><div class="val"><span class="green">${s.wins}</span> / <span class="red">${s.losses}</span></div></div>
     <div class="stat"><div class="label">Trades</div><div class="val blue">${s.trades}</div></div>
@@ -175,7 +219,10 @@ function render(d){
     ${s.filtered_out?`<div class="stat"><div class="label">Filtered</div><div class="val yellow">${s.filtered_out} <span style="font-size:11px;color:#555">(W:${s.filtered_would_win} L:${s.filtered_would_lose})</span></div></div>`:''}
     ${(s.choppy_would_win+s.choppy_would_lose)?`<div class="stat"><div class="label">Choppy Skip</div><div class="val" style="color:#ff9800">${s.choppy_would_win+s.choppy_would_lose} <span style="font-size:11px;color:#555">(W:${s.choppy_would_win} L:${s.choppy_would_lose})</span></div></div>`:''}
     ${(s.noleader_would_win+s.noleader_would_lose)?`<div class="stat"><div class="label">No-Leader Skip</div><div class="val" style="color:#ff9800">${s.noleader_would_win+s.noleader_would_lose} <span style="font-size:11px;color:#555">(W:${s.noleader_would_win} L:${s.noleader_would_lose})</span></div></div>`:''}
-    ${s.redeems?`<div class="stat"><div class="label">Auto-Redeemed</div><div class="val green">${s.redeems} <span style="font-size:11px">($${s.usdc_redeemed.toFixed(2)})</span></div></div>`:''}`;
+    ${s.redeems?`<div class="stat"><div class="label">Auto-Redeemed</div><div class="val green">${s.redeems} <span style="font-size:11px">($${s.usdc_redeemed.toFixed(2)})</span></div></div>`:''}
+    ${s.flip_trades?`<div class="stat"><div class="label">Flip P&L</div><div class="val ${s.flip_pnl>=0?'green':'red'}">$${s.flip_pnl.toFixed(2)} <span style="font-size:11px;color:#555">(${s.flip_wins}W/${s.flip_losses}L)</span></div></div>`:''}
+    ${s.flip_trades?`<div class="stat"><div class="label">Flip Trades</div><div class="val" style="color:#f97316">${s.flip_trades}</div></div>`:''}
+    `;
     const vg = s.vol_guard||{};
   if(vg.btc_range_60m!==undefined){
     const vgColor = vg.paused ? '#f44336' : '#4caf50';
@@ -184,6 +231,7 @@ function render(d){
   } else {
     document.getElementById('lastAction').innerHTML=`<strong>Last:</strong> ${s.last_action||'waiting...'}`;
   }
+  if(d.live_analysis!==undefined) renderLive(d.live_analysis);
   renderOpen(d.positions);
   renderClosed(d.closed);
 }
@@ -277,6 +325,61 @@ function renderCal(){
 
 function selMonth(m){selectedMonth=m;selectedDay=null;renderCal()}
 function selDay(d){selectedDay=d;renderCal()}
+
+function renderLive(la){
+  const panel=document.getElementById('livePanel');
+  const el=document.getElementById('liveAnalysis');
+  if(!la||!la.market){panel.style.display='none';return}
+  panel.style.display='';
+  const conf=la.adjusted_confidence||0;
+  const confColor=conf>=70?'#22c55e':conf>=45?'#eab308':conf>=25?'#f97316':'#ef4444';
+  const clsColors={genuine:'#22c55e',uncertain:'#eab308',suspicious:'#f97316',manipulation:'#ef4444',insufficient:'#666',too_short:'#666'};
+  const clsC=clsColors[la.velocity_class]||'#666';
+  const sessColors={clean:'#22c55e',cautious:'#eab308',manipulation_session:'#ef4444'};
+  const sessC=sessColors[la.session_state]||'#666';
+  const decColors={analyzing:'#818cf8',evaluating:'#818cf8',buy:'#22c55e',flip:'#f97316',skip_pred:'#eab308',skip_manip:'#ef4444',skip_guard:'#ef4444',skip_choppy:'#666'};
+  const decC=decColors[la.decision]||'#666';
+  const decLabel=(la.decision||'').toUpperCase().replace(/_/g,' ');
+
+  let predHtml='';
+  if(la.prediction){
+    const p=la.prediction;
+    predHtml=`<div class="lp-pred">
+      <div><span class="pp">Move</span> <span class="pv" style="color:#818cf8">+${(p.predicted_move*100).toFixed(1)}c</span></div>
+      <div><span class="pp">TP</span> <span class="pv" style="color:#22c55e">$${p.target.toFixed(3)}</span></div>
+      <div><span class="pp">SL</span> <span class="pv" style="color:#ef4444">$${p.sl.toFixed(3)}</span></div>
+      <div><span class="pp">Time</span> <span class="pv">${p.time_limit}s</span></div>
+      <div><span class="pp">Conf</span> <span class="pv">${p.confidence}</span></div>
+    </div>`;
+  }
+
+  const vd=la.velocity_details||{};
+  let detailHtml='';
+  if(vd.velocity!==undefined){
+    detailHtml=`<div class="lp-row" style="color:#444;font-size:11px;gap:10px;flex-wrap:wrap">
+      <span>vel:${vd.velocity}c/s</span><span>spike:${vd.max_spike}c</span>
+      <span>depth:$${vd.total_depth}</span><span>opp_max:${(vd.opp_max*100).toFixed(0)}c</span>
+      <span>btc:${vd.btc_range}%</span><span>${vd.still_building?'building':'fading'}</span>
+    </div>`;
+  }
+
+  el.innerHTML=`
+    <div class="lp-market">
+      <span>${la.market}</span>
+      <span class="lp-time">${la.remaining}s left</span>
+    </div>
+    <div class="lp-row">
+      <span style="color:#888;min-width:75px;font-weight:600">${la.leader} <span style="color:#fff">${la.leader_bid}c</span></span>
+      <div class="conf-bar-bg"><div class="conf-bar" style="width:${Math.max(conf,3)}%;background:${confColor}"></div></div>
+      <div class="conf-val" style="color:${confColor}">${conf}</div>
+    </div>
+    <div class="lp-row">
+      <span class="lp-badge" style="background:${clsC}18;color:${clsC};border:1px solid ${clsC}40">${(la.velocity_class||'').toUpperCase()}</span>
+      <span style="color:#888">Session: <strong style="color:${sessC}">${(la.session_state||'').toUpperCase()}</strong> <span style="color:#555">(${la.session_adjustment>=0?'+':''}${la.session_adjustment})</span></span>
+      <span style="margin-left:auto;color:${decC};font-weight:700;font-size:13px">${decLabel}</span>
+    </div>
+    ${detailHtml}${predHtml}`;
+}
 </script>
 </body>
 </html>"""
@@ -336,6 +439,7 @@ class DashboardServer:
         self._app.router.add_get("/api/state", self._state_handler)
         self._app.router.add_get("/api/calendar", self._calendar_handler)
         self._app.router.add_post("/api/set-size", self._set_size_handler)
+        self._app.router.add_post("/api/set-flip-size", self._set_flip_size_handler)
 
     def _build_state(self) -> dict:
         s3 = self._strat3
@@ -368,6 +472,9 @@ class DashboardServer:
 
         self._balance.check()
 
+        # Today PnL = sum of hourly PnL (hourly resets at midnight, so this is today only)
+        today_pnl = round(sum(st.hourly_pnl.values()), 2) if st.hourly_pnl else 0.0
+
         return {
             "ts": now,
             "uptime": round(now - self._start_time),
@@ -375,6 +482,7 @@ class DashboardServer:
             "trade_hours": trade_hours,
             "balance": self._balance.balance,
             "trade_size": s3.trade_size,
+            "flip_size": getattr(s3, '_flip_size', 0),
             "stats": {
                 "analyzed": st.markets_analyzed,
                 "trades": st.trades,
@@ -395,14 +503,41 @@ class DashboardServer:
                 "wins": st.wins,
                 "losses": st.losses,
                 "pnl": round(st.total_pnl, 2),
+                "today_pnl": today_pnl,
                 "win_rate": round((st.wins / total) * 100, 1) if total > 0 else 0,
                 "last_action": st.last_action,
                 "hourly_pnl": dict(st.hourly_pnl),
                 "vol_guard": getattr(self._strat3, 'vol_guard', None) and self._strat3.vol_guard.status_dict or {},
                 "manip_guard": getattr(self._strat3, 'manip_guard', None) and self._strat3.manip_guard.status_dict or {},
+                "flip_trades": getattr(st, "flip_trades", 0),
+                "flip_wins": getattr(st, "flip_wins", 0),
+                "flip_losses": getattr(st, "flip_losses", 0),
+                "flip_pnl": round(getattr(st, "flip_pnl", 0), 2),
+                "skipped_depth": getattr(st, "skipped_depth", 0),
+                "skipped_hour": getattr(st, "skipped_hour", 0),
+                "skipped_btc_vol": getattr(st, "skipped_btc_vol", 0),
+                "skipped_down_weak": getattr(st, "skipped_down_weak", 0),
+                "skipped_opp_high": getattr(st, "skipped_opp_high", 0),
+                "skipped_depth_high": getattr(st, "skipped_depth_high", 0),
+                "skipped_bid_vol": getattr(st, "skipped_bid_vol", 0),
+                "skipped_velocity": getattr(st, "skipped_velocity", 0),
+                "opp_would_win": getattr(st, "opp_would_win", 0),
+                "opp_would_lose": getattr(st, "opp_would_lose", 0),
+                "bidvol_would_win": getattr(st, "bidvol_would_win", 0),
+                "bidvol_would_lose": getattr(st, "bidvol_would_lose", 0),
+                "vel_would_win": getattr(st, "vel_would_win", 0),
+                "vel_would_lose": getattr(st, "vel_would_lose", 0),
+                "depth_high_would_win": getattr(st, "depth_would_win", 0),
+                "depth_high_would_lose": getattr(st, "depth_would_lose", 0),
+                "force_exits": getattr(st, "force_exits", 0),
+                "depth_would_win": getattr(st, "depth_would_win", 0),
+                "depth_would_lose": getattr(st, "depth_would_lose", 0),
+                "hour_would_win": getattr(st, "hour_would_win", 0),
+                "hour_would_lose": getattr(st, "hour_would_lose", 0),
             },
             "positions": positions,
             "closed": closed,
+            "live_analysis": getattr(self._strat3, '_live_analysis', None),
         }
 
     async def _index_handler(self, request):
@@ -438,6 +573,18 @@ class DashboardServer:
                 return web.json_response({"ok": True, "size": size})
         except Exception as exc:
             log.warning("Set size failed: %s", exc)
+        return web.json_response({"ok": False}, status=400)
+
+    async def _set_flip_size_handler(self, request):
+        try:
+            data = await request.json()
+            size = float(data.get("size", 0))
+            if 1 <= size <= 500 and hasattr(self._strat3, '_flip_size'):
+                self._strat3._flip_size = size
+                log.info("Flip size updated to $%.0f", size)
+                return web.json_response({"ok": True, "size": size})
+        except Exception as exc:
+            log.warning("Set flip size failed: %s", exc)
         return web.json_response({"ok": False}, status=400)
 
     async def _broadcast_loop(self):

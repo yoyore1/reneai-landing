@@ -330,7 +330,7 @@ class PolymarketClient:
             signed = self._clob_client.create_order(order_args)
             result = self._clob_client.post_order(signed, OrderType.GTC)
             pos.order_id = result.get("orderID", result.get("id", ""))
-            status = result.get("status", "")
+            status = result.get("status", "").lower()
             pos.filled = status == "matched"
             log.info(
                 "[LIVE] BUY posted: status=%s order=%s | full=%s",
@@ -338,27 +338,34 @@ class PolymarketClient:
             )
 
             if not pos.filled and pos.order_id:
-                await asyncio.sleep(3)
-                try:
-                    order_info = self._clob_client.get_order(pos.order_id)
-                    live_status = order_info.get("status", "")
-                    size_matched = float(order_info.get("size_matched", "0"))
-                    log.info("[LIVE] BUY check after 3s: status=%s matched=%.2f", live_status, size_matched)
-                    if size_matched >= qty * 0.9:
-                        pos.filled = True
-                        pos.qty = size_matched
-                        log.info("[LIVE] BUY FILLED (%.1f shares matched)", size_matched)
-                    else:
-                        self._clob_client.cancel(pos.order_id)
-                        log.warning("[LIVE] BUY NOT FILLED after 3s — cancelled (matched=%.1f/%d)", size_matched, qty)
-                        pos.filled = False
-                except Exception as check_exc:
-                    log.warning("[LIVE] BUY status check failed: %s — cancelling", check_exc)
+                for wait_round in (2, 3, 5):
+                    await asyncio.sleep(wait_round)
+                    try:
+                        order_info = self._clob_client.get_order(pos.order_id)
+                        live_status = order_info.get("status", "").lower()
+                        size_matched = float(order_info.get("size_matched", "0"))
+                        log.info("[LIVE] BUY check after %ds: status=%s matched=%.2f/%d",
+                                 wait_round, live_status, size_matched, qty)
+                        if size_matched > 0:
+                            pos.filled = True
+                            pos.qty = size_matched
+                            pos.avg_entry = float(order_info.get("associate_trades", [{}])[0].get("price", ask_price)) if order_info.get("associate_trades") else ask_price
+                            log.info("[LIVE] BUY FILLED (%.1f shares matched)", size_matched)
+                            break
+                        if live_status == "matched":
+                            pos.filled = True
+                            pos.qty = float(order_info.get("original_size", qty))
+                            log.info("[LIVE] BUY FILLED (status=matched)")
+                            break
+                    except Exception as check_exc:
+                        log.warning("[LIVE] BUY status check round %d failed: %s", wait_round, check_exc)
+
+                if not pos.filled:
+                    log.warning("[LIVE] BUY NOT FILLED after retries — cancelling (order=%s)", pos.order_id)
                     try:
                         self._clob_client.cancel(pos.order_id)
                     except Exception:
                         pass
-                    pos.filled = False
         except Exception as exc:
             log.error("Buy order failed: %s", exc, exc_info=True)
 
@@ -452,26 +459,32 @@ class PolymarketClient:
                     signed = self._clob_client.create_order(order_args)
                     result = self._clob_client.post_order(signed, OrderType.GTC)
                     order_id = result.get("orderID", result.get("id", ""))
-                    status = result.get("status", "")
+                    status = result.get("status", "").lower()
 
                     if status == "matched":
                         total_matched += qty
                         log.info("[LIVE] SELL %s FILLED %d shares", label, qty)
                     elif order_id:
-                        if reason != "sl":
-                            await asyncio.sleep(2)
-                        try:
-                            info = self._clob_client.get_order(order_id)
-                            matched = float(info.get("size_matched", "0"))
-                            total_matched += matched
-                            if matched < qty * 0.5:
-                                try:
-                                    self._clob_client.cancel(order_id)
-                                except Exception:
-                                    pass
-                            log.info("[LIVE] SELL %s matched=%.1f/%d", label, matched, qty)
-                        except Exception:
-                            pass
+                        for wait_s in (2, 3, 5):
+                            await asyncio.sleep(wait_s)
+                            try:
+                                info = self._clob_client.get_order(order_id)
+                                matched = float(info.get("size_matched", "0"))
+                                live_status = info.get("status", "").lower()
+                                log.info("[LIVE] SELL %s check after %ds: status=%s matched=%.1f/%d",
+                                         label, wait_s, live_status, matched, qty)
+                                if matched > 0 or live_status == "matched":
+                                    total_matched += max(matched, qty) if live_status == "matched" else matched
+                                    log.info("[LIVE] SELL %s FILLED (%.1f matched)", label, matched)
+                                    break
+                            except Exception as chk_exc:
+                                log.warning("[LIVE] SELL %s check failed: %s", label, chk_exc)
+                        else:
+                            try:
+                                self._clob_client.cancel(order_id)
+                            except Exception:
+                                pass
+                            log.warning("[LIVE] SELL %s NOT FILLED after retries — cancelled", label)
                 except Exception as exc:
                     log.warning("[LIVE] SELL %s failed: %s", label, exc)
 
@@ -479,7 +492,7 @@ class PolymarketClient:
                     if reason != "sl":
                         await asyncio.sleep(1)
 
-            if total_matched >= first_qty * 0.8:
+            if total_matched > 0:
                 fill_price = bid_price
                 pnl = (fill_price - position.avg_entry) * total_matched
                 position.exit_price = fill_price

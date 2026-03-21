@@ -85,11 +85,11 @@ LAUNCHER_HTML = """<!DOCTYPE html>
   <div class="wallet" id="wallet"></div>
 </div>
 <div class="wrapper">
-  <!-- TEST BOT -->
+  <!-- SIMPLE + GUARD BOT -->
   <div class="card">
     <div class="logo">&#9671;</div>
-    <h2>S3 Test Bot</h2>
-    <div class="subtitle">Dry run &middot; Port 9001</div>
+    <h2>S3 + Guard (Simple)</h2>
+    <div class="subtitle">S3 + ManipGuard &middot; No flip &middot; No health &middot; Port 9001</div>
     <div class="tag test">DRY RUN</div>
     <div id="status-test" class="status-box stopped">
       <span class="dot off" id="dot-test"></span>
@@ -142,23 +142,42 @@ LAUNCHER_HTML = """<!DOCTYPE html>
     <div class="log-box" id="log-research"></div>
   </div>
 
-  <!-- TUNED GUARD V2 -->
-  <div class="card" style="border-color:#10b98120">
-    <div class="logo">&#128737;</div>
-    <h2>S3 + Tuned Guard V2</h2>
-    <div class="subtitle">Balanced guard + reversal detection &middot; rev&#8805;30% &middot; Port 9004</div>
-    <div class="tag" style="background:rgba(16,185,129,0.12);color:#10b981;border:1px solid rgba(16,185,129,0.2)">TUNED V2</div>
+  <!-- PERFECTED BOT -->
+  <div class="card" style="border-color:#a855f720">
+    <div class="logo">&#127775;</div>
+    <h2>Perfected Bot</h2>
+    <div class="subtitle">Data-proven filters only &middot; No depth filter &middot; Opp+Choppy+BidVol &middot; Port 9004</div>
+    <div class="tag" style="background:rgba(168,85,247,0.12);color:#a855f7;border:1px solid rgba(168,85,247,0.2)">PERFECTED</div>
     <div id="status-mg2" class="status-box stopped">
       <span class="dot off" id="dot-mg2"></span>
       <span id="txt-mg2">Stopped</span>
     </div>
     <div class="actions">
-      <button class="btn-start" id="start-mg2" onclick="api('mg2','start')">Start Tuned V2</button>
-      <button class="btn-stop" id="stop-mg2" onclick="api('mg2','stop')" disabled>Stop Tuned V2</button>
+      <button class="btn-start" id="start-mg2" onclick="api('mg2','start')">Start Perfected</button>
+      <button class="btn-stop" id="stop-mg2" onclick="api('mg2','stop')" disabled>Stop Perfected</button>
       <a class="btn-dash hidden" id="dash-mg2" href="" target="_blank">Open Dashboard &#8594;</a>
     </div>
     <div class="meta" id="meta-mg2"></div>
     <div class="log-box" id="log-mg2"></div>
+  </div>
+
+  <!-- EDGE BOT -->
+  <div class="card" style="border-color:#22d3ee20">
+    <div class="logo">&#9889;</div>
+    <h2>Edge Bot (Scalp)</h2>
+    <div class="subtitle">+/-12c scalp &middot; 1:1 R:R &middot; Tick-by-tick exits &middot; $30/trade &middot; Port 9006</div>
+    <div class="tag" style="background:rgba(34,211,238,0.12);color:#22d3ee;border:1px solid rgba(34,211,238,0.2)">EDGE</div>
+    <div id="status-edge" class="status-box stopped">
+      <span class="dot off" id="dot-edge"></span>
+      <span id="txt-edge">Stopped</span>
+    </div>
+    <div class="actions">
+      <button class="btn-start" id="start-edge" onclick="api('edge','start')">Start Edge</button>
+      <button class="btn-stop" id="stop-edge" onclick="api('edge','stop')" disabled>Stop Edge</button>
+      <a class="btn-dash hidden" id="dash-edge" href="" target="_blank">Open Dashboard &#8594;</a>
+    </div>
+    <div class="meta" id="meta-edge"></div>
+    <div class="log-box" id="log-edge"></div>
   </div>
 
   <!-- TIGHT SL BOT -->
@@ -179,6 +198,25 @@ LAUNCHER_HTML = """<!DOCTYPE html>
     <div class="meta" id="meta-tight_sl"></div>
     <div class="log-box" id="log-tight_sl"></div>
   </div>
+
+  <!-- ARB BOT -->
+  <div class="card" style="border-color:#f59e0b20">
+    <div class="logo">&#9878;</div>
+    <h2>5m/15m Arb Scanner</h2>
+    <div class="subtitle">Cross-market arbitrage &middot; BTC 5m vs 15m overlap &middot; Port 9010</div>
+    <div class="tag" style="background:rgba(245,158,11,0.12);color:#f59e0b;border:1px solid rgba(245,158,11,0.2)">ARB</div>
+    <div id="status-arb" class="status-box stopped">
+      <span class="dot off" id="dot-arb"></span>
+      <span id="txt-arb">Stopped</span>
+    </div>
+    <div class="actions">
+      <button class="btn-start" id="start-arb" onclick="api('arb','start')">Start Arb Scanner</button>
+      <button class="btn-stop" id="stop-arb" onclick="api('arb','stop')" disabled>Stop Arb Scanner</button>
+      <a class="btn-dash hidden" id="dash-arb" href="" target="_blank">Open Dashboard &#8594;</a>
+    </div>
+    <div class="meta" id="meta-arb"></div>
+    <div class="log-box" id="log-arb"></div>
+  </div>
 </div>
 <script>
 function poll() {
@@ -187,7 +225,9 @@ function poll() {
     render('official', d.official);
     if(d.research) render('research', d.research);
     if(d.mg2) render('mg2', d.mg2);
+    if(d.edge) render('edge', d.edge);
     if(d.tight_sl) render('tight_sl', d.tight_sl);
+    if(d.arb) render('arb', d.arb);
     if(d.balance!==undefined){
       document.getElementById('balance').textContent='$'+parseFloat(d.balance).toFixed(2);
       document.getElementById('balance').style.color=parseFloat(d.balance)>0?'#22c55e':'#ef4444';
@@ -249,6 +289,8 @@ setInterval(poll,2000);
 class BotProcess:
     """Manages an S3 bot subprocess."""
 
+    BOT_MODULES = {"arb": "bot.arb_5_15"}
+
     def __init__(self, name: str, cmd_args: list, port: int):
         self.name = name
         self.port = port
@@ -274,8 +316,9 @@ class BotProcess:
             return
         self._logs.clear()
         self._start_time = time.time()
+        module = self.BOT_MODULES.get(self.name, "bot.main")
         self._proc = subprocess.Popen(
-            [sys.executable, "-m", "bot.main"] + self._cmd_args,
+            [sys.executable, "-m", module] + self._cmd_args,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -368,8 +411,9 @@ class LauncherServer:
         self._port = port
         self._balance_checker = BalanceChecker()
         self._bots = {
-            "test": BotProcess("test", ["--port", "9001", "--pnl-file", "pnl_test.json",
-                                        "--bot-name", "test", "--no-skip-noleader"], port=9001),
+            "test": BotProcess("test", ["--port", "9001", "--strategy", "guard",
+                                        "--pnl-file", "pnl_simple_guard.json",
+                                        "--bot-name", "simple_guard"], port=9001),
             "official": BotProcess(
                 "official",
                 ["--port", "9002", "--live", "--strategy", "mg2",
@@ -384,15 +428,26 @@ class LauncherServer:
             ),
             "mg2": BotProcess(
                 "mg2",
-                ["--port", "9004", "--strategy", "mg2r", "--pnl-file", "pnl_mg2.json",
-                 "--bot-name", "mg2"],
+                ["--port", "9004", "--strategy", "perfected",
+                 "--pnl-file", "pnl_perfected.json", "--bot-name", "perfected"],
                 port=9004,
+            ),
+            "edge": BotProcess(
+                "edge",
+                ["--port", "9006", "--strategy", "edge",
+                 "--pnl-file", "pnl_edge.json", "--bot-name", "edge"],
+                port=9006,
             ),
             "tight_sl": BotProcess(
                 "tight_sl",
                 ["--port", "9005", "--pnl-file", "pnl_tight_sl.json",
                  "--bot-name", "tight_sl", "--no-skip-noleader", "--sl", "0.45"],
                 port=9005,
+            ),
+            "arb": BotProcess(
+                "arb",
+                ["--port", "9010", "--size", "20"],
+                port=9010,
             ),
         }
         self._app = web.Application()
